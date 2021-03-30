@@ -42,16 +42,17 @@ def process_adult(filename):
     return adult
 
 class LoadData(Dataset):
-    def __init__(self, df, pred_var):
+    def __init__(self, df, pred_var, sen_var):
         self.y = df[pred_var].values
         self.x = df.drop(pred_var, axis = 1).values
+        self.sen = df[sen_var].values
     
     def __getitem__(self, index):
-        return torch.tensor(self.x[index]), torch.tensor(self.y[index])
+        return torch.tensor(self.x[index]), torch.tensor(self.y[index]), torch.tensor(self.sen[index])
     
     def __len__(self):
         return self.y.shape[0]
-
+   
 if __name__ == "utils":
     adult = process_adult('adult.data')
     test = process_adult('adult.test')
@@ -80,31 +81,32 @@ if __name__ == "utils":
     BATCH_SIZE = 128
     NUM_WORKERS = 4
     RANDOM_SEED = 123
-    NUM_EPOCHS = 20 
+    NUM_EPOCHS = 10 
     LEARNING_RATE = 0.05
     FRAC = 1 # the fraction of clients
     NUM_CLIENTS = 2
     DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    OPTIMIZER = 'sgd'
+    OPTIMIZER = 'adam'
     LOCAL_EPOCHS = 10
     NUM_FEATURES = len(adult.columns)-1
+    SEN_VAR = "sex"
     #########################################################
-    client1_dataset = LoadData(client1, 'salary')
+    client1_dataset = LoadData(client1, 'salary', 'sex_ Female')
     client1_loader = DataLoader(dataset = client1_dataset,
                                 batch_size = BATCH_SIZE,
                                 num_workers = NUM_WORKERS)
 
-    client2_dataset = LoadData(client2, 'salary')
+    client2_dataset = LoadData(client2, 'salary', 'sex_ Female')
     client2_loader = DataLoader(dataset = client2_dataset,
                                 batch_size = BATCH_SIZE,
                                 num_workers = NUM_WORKERS)
 
-    test_dataset = LoadData(test, 'salary')
+    test_dataset = LoadData(test, 'salary', 'sex_ Female')
     test_loader = DataLoader(dataset = test_dataset,
                                 batch_size = BATCH_SIZE,
                                 num_workers = NUM_WORKERS)
     
-    train_dataset = LoadData(adult, 'salary')
+    train_dataset = LoadData(adult, 'salary', 'sex_ Female')
     train_loader = DataLoader(dataset = train_dataset,
                             batch_size = BATCH_SIZE,
                             num_workers = NUM_WORKERS)
@@ -115,7 +117,7 @@ if __name__ == "utils":
     num_epochs = 2
     for epoch in range(num_epochs):
 
-        for batch_idx, (x, y) in enumerate(client1_loader):
+        for batch_idx, (x, y, sen) in enumerate(client1_loader):
             
             print('Epoch:', epoch+1, end='')
             print(' | Batch index:', batch_idx, end='')
@@ -123,6 +125,7 @@ if __name__ == "utils":
             
             x = x.to(DEVICE)
             y = y.to(DEVICE)
+            sen = sen.to(DEVICE)
             
             print('break minibatch for-loop')
             break
