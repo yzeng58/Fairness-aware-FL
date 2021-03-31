@@ -62,7 +62,8 @@ if __name__ == "utils":
     np.random.seed(1)
     adult_private_idx = adult[adult['workclass_ Private'] == 1].index
     adult_others_idx = adult[adult['workclass_ Private'] == 0].index
-
+    mean_sensitive = (adult['sex_ Female'] == 1).mean()
+    
     client1_idx = np.concatenate((np.random.choice(adult_private_idx, int(.8*len(adult_private_idx)), replace = False),
                                     np.random.choice(adult_others_idx, int(.2*len(adult_others_idx)), replace = False)))
     client2_idx = np.array(list(set(adult.index) - set(client1_idx)))
