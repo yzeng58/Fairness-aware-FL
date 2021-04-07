@@ -79,54 +79,17 @@ if __name__ == "utils":
     ################## torch preparation ##################
 
     ################## MODEL SETTING ########################
-    BATCH_SIZE = 128
-    NUM_WORKERS = 4
     RANDOM_SEED = 123
-    NUM_EPOCHS = 10 
-    LEARNING_RATE = 0.05
-    FRAC = 1 # the fraction of clients
-    NUM_CLIENTS = 2
     DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    OPTIMIZER = 'adam'
-    LOCAL_EPOCHS = 10
     NUM_FEATURES = len(adult.columns)-1
     SEN_VAR = "sex"
     #########################################################
     client1_dataset = LoadData(client1, 'salary', 'sex_ Female')
-    client1_loader = DataLoader(dataset = client1_dataset,
-                                batch_size = BATCH_SIZE,
-                                num_workers = NUM_WORKERS)
 
     client2_dataset = LoadData(client2, 'salary', 'sex_ Female')
-    client2_loader = DataLoader(dataset = client2_dataset,
-                                batch_size = BATCH_SIZE,
-                                num_workers = NUM_WORKERS)
 
     test_dataset = LoadData(test, 'salary', 'sex_ Female')
-    test_loader = DataLoader(dataset = test_dataset,
-                                batch_size = BATCH_SIZE,
-                                num_workers = NUM_WORKERS)
     
     train_dataset = LoadData(adult, 'salary', 'sex_ Female')
-    train_loader = DataLoader(dataset = train_dataset,
-                            batch_size = BATCH_SIZE,
-                            num_workers = NUM_WORKERS)
 
     torch.manual_seed(0)
-
-    # test whether dataset can be loaded correctly
-    num_epochs = 2
-    for epoch in range(num_epochs):
-
-        for batch_idx, (x, y, sen) in enumerate(client1_loader):
-            
-            print('Epoch:', epoch+1, end='')
-            print(' | Batch index:', batch_idx, end='')
-            print(' | Batch size:', y.size()[0])
-            
-            x = x.to(DEVICE)
-            y = y.to(DEVICE)
-            sen = sen.to(DEVICE)
-            
-            print('break minibatch for-loop')
-            break
