@@ -8,6 +8,9 @@ from torch.utils.data import DataLoader
 import torch
 
 def process_adult(filename):
+    """
+    process the adult file: scale, one-hot encode
+    """
     header = ['age', 'workclass', 'fnlwgt', 'education', 'education-num', 'marital-status',
                 'occupation', 'relationship', 'race', 'sex', 'capital-gain', 'capital-loss',
                 'hours-per-week', 'native-country', 'salary']
