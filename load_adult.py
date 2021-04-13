@@ -58,7 +58,7 @@ class LoadData(Dataset):
    
 if __name__ == "load_adult":
     adult = process_adult('adult.data')
-    test = process_adult('adult.test')
+    test = process_adult('adult.test') # the distribution is very different from training distribution
     test['native-country_ Holand-Netherlands'] = 0
     test = test[adult.columns]
 
