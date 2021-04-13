@@ -61,7 +61,8 @@ if __name__ == "load_adult":
     test = process_adult('adult.test') # the distribution is very different from training distribution
     test['native-country_ Holand-Netherlands'] = 0
     test = test[adult.columns]
-
+    sen_var = 'sex_ Female'
+    
     np.random.seed(1)
     adult_private_idx = adult[adult['workclass_ Private'] == 1].index
     adult_others_idx = adult[adult['workclass_ Private'] == 0].index
