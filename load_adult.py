@@ -53,7 +53,7 @@ class LoadData(Dataset):
     def __len__(self):
         return self.y.shape[0]
    
-if __name__ == "utils":
+if __name__ == "load_adult":
     adult = process_adult('adult.data')
     test = process_adult('adult.test')
     test['native-country_ Holand-Netherlands'] = 0
