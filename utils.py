@@ -1,4 +1,6 @@
 import torch
+from torch.utils.data import DataLoader, Dataset
+import numpy as np
 
 class DatasetSplit(Dataset):
     """
@@ -8,6 +10,9 @@ class DatasetSplit(Dataset):
     def __init__(self, dataset, idxs):
         self.dataset = dataset
         self.idxs = [int(i) for i in idxs]
+        self.x = self.dataset.x[self.idxs]
+        self.y = self.dataset.y[self.idxs]
+        self.sen = self.dataset.sen[self.idxs]
 
     def __len__(self):
         return len(self.idxs)
@@ -29,3 +34,9 @@ class logReg(torch.nn.Module):
         logits = self.linear(x.float())
         probas = torch.sigmoid(logits)
         return probas.type(torch.FloatTensor), logits
+    
+def RD(n_yz):
+    """
+    Given a dictionary of number of samples in different groups, compute the risk difference.
+    """
+    return abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - n_yz[(1,0)]/(n_yz[(0,0)] + n_yz[(1,0)]))
