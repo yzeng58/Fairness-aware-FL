@@ -20,6 +20,7 @@ class DatasetSplit(Dataset):
     def __getitem__(self, item):
         feature, label, sensitive = self.dataset[self.idxs[item]]
         return feature, label, sensitive
+        # return self.x[item], self.y[item], self.sen[item]
     
 class logReg(torch.nn.Module):
     """
