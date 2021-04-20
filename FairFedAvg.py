@@ -78,7 +78,7 @@ class ClientUpdate(object):
 
                 if batch_idx % 50 == 0:
                     print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
-                        global_round, i, batch_idx * len(features),
+                        global_round + 1, i, batch_idx * len(features),
                         len(self.trainloader.dataset),
                         100. * batch_idx / len(self.trainloader), loss.item()))
                 batch_loss.append(loss.item())
@@ -300,22 +300,23 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
             #     lbd[(1,1)] = 1 - lbd[(1,0)]
 
             # update the lambda according to the paper -> see Section A.1 of FairBatch
-            # works well! 
-            loss_yz[(0,0)] = loss_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
+            # works well! The real batch size would be different from the setting
+            loss_yz[(0,0)] = (loss_yz[(0,0)] - 1)/(m_yz[(0,0)] + m_yz[(1,0)])
             loss_yz[(1,0)] = loss_yz[(1,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
-            loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
+            loss_yz[(0,1)] = (loss_yz[(0,1)] - 1)/(m_yz[(0,1)] + m_yz[(1,1)])
             loss_yz[(1,1)] = loss_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
 
             y0_diff = abs(loss_yz[(0,0)] - loss_yz[(0,1)])
             y1_diff = abs(loss_yz[(1,0)] - loss_yz[(1,1)])
             if y1_diff < y0_diff:
-                lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
+                lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)] - loss_yz[(0,0)]) > 0)-1)
                 lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
                 lbd[(0,1)] = 1 - lbd[(0,0)]
             else:
-                lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(1,0)]/m_yz[(1,0)]) > 0)-1)
+                lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)] - loss_yz[(1,0)]) > 0)-1)
                 lbd[(1,0)] = min(max(0, lbd[(1,0)]), 1)
-                
+                lbd[(1,1)] = 1 - lbd[(1,0)]
+
         train_accuracy.append(sum(list_acc)/len(list_acc))
 
         # print global training loss after every 'i' rounds
@@ -333,7 +334,7 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
     # Test inference after completion of training
     test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size)
 
-    print(f' \n Results after {num_rounds} global rounds of training:')
+    print(f' \n Results after {num_rounds+1} global rounds of training:')
     print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
     print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
 
