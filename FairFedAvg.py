@@ -224,13 +224,6 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
            (1,0): ((train_dataset.y == 1) & (train_dataset.sen == 0)).sum(),
            (0,1): ((train_dataset.y == 0) & (train_dataset.sen == 1)).sum(),
            (1,1): ((train_dataset.y == 1) & (train_dataset.sen == 1)).sum()}
-    
-    # lbd = {
-    #     (0,0): m_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)]), 
-    #     (0,1): m_yz[(0,1)]/(m_yz[(0,0)] + m_yz[(1,0)]),
-    #     (1,0): m_yz[(0,1)]/(m_yz[(1,1)] + m_yz[(0,1)]),
-    #     (1,1): m_yz[(1,1)]/(m_yz[(1,1)] + m_yz[(0,1)])
-    #       }
 
     lbd = {
         (0,0): m_yz[(0,0)]/train_dataset.y.shape[0], 
@@ -292,59 +285,37 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
                 n_yz_c[(1,0)], n_yz_c[(1,0)] + n_yz_c[(0,0)]))
             
         if option == "FairBatch": 
-            # update the lambda according to the paper
-            # y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(1,0)]/m_yz[(1,0)])
-            # y1_diff = abs(loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(1,1)]/m_yz[(1,1)])
-            # if y1_diff < y0_diff:
-            #     lbd[(0,0)] -= alpha * (2*int((loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
-            #     lbd[(0,0)] = max(0, lbd[(0,0)])
-            #     lbd[(1,0)] = (m_yz[(0,0)] + m_yz[(1,0)])/train_dataset.y.shape[0] - lbd[(0,0)]
-            # else:
-            #     lbd[(0,1)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(0,1)]/m_yz[(0,1)]) > 0)-1)
-            #     lbd[(0,1)] = max(0, lbd[(0,1)])
-            #     lbd[(1,1)] = (m_yz[(0,1)] + m_yz[(1,1)])/train_dataset.y.shape[0] - lbd[(0,1)]
-
-            # doesn't work well
-            # y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(1,0)]/m_yz[(1,0)])
-            # y1_diff = abs(loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(1,1)]/m_yz[(1,1)])
-            # if y1_diff < y0_diff:
-            #     lbd[(0,0)] -= alpha * (2*int((loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
-            #     lbd[(0,0)] = max(0, lbd[(0,0)])
-            #     lbd[(1,0)] = 1 - lbd[(0,0)]
-            # else:
-            #     lbd[(0,1)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(0,1)]/m_yz[(0,1)]) > 0)-1)
-            #     lbd[(0,1)] = max(0, lbd[(0,1)])
-            #     lbd[(1,1)] = 1 - lbd[(0,1)]
-            
-
             # update the lambda according to the code 
-            # little confused -> seems inconsistent with the theory
-            # work very well!
-            y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(0,1)]/m_yz[(0,1)])
-            y1_diff = abs(loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(1,1)]/m_yz[(1,1)])
-            if y1_diff < y0_diff:
-                lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
-                lbd[(0,0)] = max(0, lbd[(0,0)])
-                lbd[(0,1)] = 1 - lbd[(0,0)]
-            else:
-                lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(1,0)]/m_yz[(1,0)]) > 0)-1)
-                lbd[(1,0)] = max(0, lbd[(1,0)])
-                lbd[(1,1)] = 1 - lbd[(1,0)]
-
-            # update the lambda according to the code 
-            # little confused -> seems inconsistent with the theory
-            # doesn't work!
+            # inconsistent with the theory
+            # work very well! -> even better than the one below
             # y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(0,1)]/m_yz[(0,1)])
             # y1_diff = abs(loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(1,1)]/m_yz[(1,1)])
             # if y1_diff < y0_diff:
             #     lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
             #     lbd[(0,0)] = max(0, lbd[(0,0)])
-            #     lbd[(0,1)] = (m_yz[(0,0)] + m_yz[(0,1)])/train_dataset.y.shape[0] - lbd[(0,0)]
+            #     lbd[(0,1)] = 1 - lbd[(0,0)]
             # else:
             #     lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(1,0)]/m_yz[(1,0)]) > 0)-1)
             #     lbd[(1,0)] = max(0, lbd[(1,0)])
-            #     lbd[(1,1)] = (m_yz[(1,1)] + m_yz[(1,0)])/train_dataset.y.shape[0] - lbd[(1,0)]
+            #     lbd[(1,1)] = 1 - lbd[(1,0)]
 
+            # update the lambda according to the paper -> see Section A.1 of FairBatch
+            # works well! 
+            loss_yz[(0,0)] = loss_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
+            loss_yz[(1,0)] = loss_yz[(1,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
+            loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
+            loss_yz[(1,1)] = loss_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
+
+            y0_diff = abs(loss_yz[(0,0)] - loss_yz[(0,1)])
+            y1_diff = abs(loss_yz[(1,0)] - loss_yz[(1,1)])
+            if y1_diff < y0_diff:
+                lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
+                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
+                lbd[(0,1)] = 1 - lbd[(0,0)]
+            else:
+                lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(1,0)]/m_yz[(1,0)]) > 0)-1)
+                lbd[(1,0)] = min(max(0, lbd[(1,0)]), 1)
+                
         train_accuracy.append(sum(list_acc)/len(list_acc))
 
         # print global training loss after every 'i' rounds
