@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
+import torch.nn.functional as F
 
 class DatasetSplit(Dataset):
     """
@@ -41,3 +42,15 @@ def RD(n_yz):
     Given a dictionary of number of samples in different groups, compute the risk difference.
     """
     return abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - n_yz[(1,0)]/(n_yz[(0,0)] + n_yz[(1,0)]))
+
+def loss_func(option, logits, targets, distance, sensitive, mean_sensitive, larg = 1):
+    """
+    Loss function. 
+    """
+    acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
+    fair_loss = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), distance.T[0])
+    fair_loss = torch.mean(torch.mul(fair_loss, fair_loss)) # modified mean to sum
+    if option == 'Zafar':
+        return acc_loss + larg*fair_loss, acc_loss, larg*fair_loss
+    else:
+        return acc_loss, acc_loss, larg*fair_loss
