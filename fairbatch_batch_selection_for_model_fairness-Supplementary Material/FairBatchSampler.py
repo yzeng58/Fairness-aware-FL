@@ -310,7 +310,6 @@ class FairBatch(Sampler):
             
         """
         
-        
         if self.fairness_type == 'original':
             
             entire_index = torch.FloatTensor([i for i in range(len(self.y_data))])
@@ -321,6 +320,7 @@ class FairBatch(Sampler):
                 yield sort_index[i]
             
         else:
+
         
             self.adjust_lambda() # Adjust the lambda values
             each_size = {}
@@ -369,7 +369,10 @@ class FairBatch(Sampler):
                              
                 random.shuffle(key_in_fairbatch)
 
-                yield key_in_fairbatch
+                print(key_in_fairbatch)
+                for j in key_in_fairbatch:
+                    print(j.shape)
+                    yield j
                                
 
     def __len__(self):

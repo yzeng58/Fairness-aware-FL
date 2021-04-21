@@ -43,14 +43,19 @@ def RD(n_yz):
     """
     return abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - n_yz[(1,0)]/(n_yz[(0,0)] + n_yz[(1,0)]))
 
-def loss_func(option, logits, targets, distance, sensitive, mean_sensitive, larg = 1):
+def loss_func(option, logits, targets, outputs, sensitive, mean_sensitive, larg = 1):
     """
     Loss function. 
     """
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
-    fair_loss = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), distance.T[0])
+    fair_loss = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[0])
     fair_loss = torch.mean(torch.mul(fair_loss, fair_loss)) # modified mean to sum
     if option == 'Zafar':
         return acc_loss + larg*fair_loss, acc_loss, larg*fair_loss
+    elif option == 'FB_inference':
+        # acc_loss = torch.sum(torch.nn.BCELoss(reduction = 'none')((outputs.T[1]+1)/2, torch.ones(logits.shape[0])))
+        acc_loss = F.cross_entropy(logits, torch.ones(logits.shape[0]).type(torch.LongTensor), reduction = 'sum')
+        return acc_loss, acc_loss, fair_loss
     else:
         return acc_loss, acc_loss, larg*fair_loss
+

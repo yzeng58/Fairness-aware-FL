@@ -16,13 +16,13 @@ from torch.autograd import Variable
 from functools import partial
 
 class ClientUpdate(object):
-    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None):
-        self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, option, lbd)
+    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None, seed = 0):
+        self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, option, lbd, seed)
         self.dataset = dataset
         self.option = option
         self.penalty = penalty
             
-    def train_val(self, dataset, idxs, batch_size, option, lbd):
+    def train_val(self, dataset, idxs, batch_size, option, lbd, seed):
         """
         Returns train, validation for a given local training dataset
         and user indexes.
@@ -35,7 +35,7 @@ class ClientUpdate(object):
         if option == "FairBatch": 
             # FairBatch(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0)
             sampler = FairBatch(DatasetSplit(dataset, idxs_train), lbd, idxs,
-                                 batch_size = batch_size, replacement = False, seed = 0)
+                                 batch_size = batch_size, replacement = False, seed = seed)
             trainloader = DataLoader(DatasetSplit(dataset, idxs_train), sampler = sampler,
                                      batch_size=batch_size, num_workers = 0)
                         
@@ -68,17 +68,17 @@ class ClientUpdate(object):
                 # because PyTorch accumulates the gradients on subsequent backward passes. 
                 # This is convenient while training RNNs
 
-                log_probs, logits = model(features)
+                probas, logits = model(features)
                 loss, _, _ = loss_func(self.option,
-                    logits, labels, logits, sensitive, mean_sensitive, self.penalty)
+                    logits, labels, probas, sensitive, mean_sensitive, self.penalty)
                     
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-                if batch_idx % 50 == 0:
+                if (100. * batch_idx / len(self.trainloader)) % 50 == 0:
                     print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
-                        global_round, i, batch_idx * len(features),
+                        global_round + 1, i, batch_idx * len(features),
                         len(self.trainloader.dataset),
                         100. * batch_idx / len(self.trainloader), loss.item()))
                 batch_loss.append(loss.item())
@@ -129,14 +129,14 @@ class ClientUpdate(object):
                 
                 if self.option == "FairBatch":
                 # the objective function have no lagrangian term
-                    loss_yz_,_,_ = loss_func("unconstrained", outputs[group_boolean_idx[yz]], 
+                    loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
-                                         logits[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
+                                         outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
                                          mean_sensitive, self.penalty)
                     loss_yz[yz] += loss_yz_
             
-            batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, outputs, 
-                                                        labels, logits, sensitive, mean_sensitive, self.penalty)
+            batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, logits, 
+                                                        labels, outputs, sensitive, mean_sensitive, self.penalty)
             loss, acc_loss, fair_loss = (loss + batch_loss.item(), 
                                          acc_loss + batch_acc_loss.item(), 
                                          fair_loss + batch_fair_loss.item())
@@ -224,13 +224,21 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
            (1,0): ((train_dataset.y == 1) & (train_dataset.sen == 0)).sum(),
            (0,1): ((train_dataset.y == 0) & (train_dataset.sen == 1)).sum(),
            (1,1): ((train_dataset.y == 1) & (train_dataset.sen == 1)).sum()}
-    
+
+    # lbd = {
+    #     (0,0): m_yz[(0,0)]/train_dataset.y.shape[0], 
+    #     (0,1): m_yz[(0,1)]/train_dataset.y.shape[0],
+    #     (1,0): m_yz[(0,1)]/train_dataset.y.shape[0],
+    #     (1,1): m_yz[(1,1)]/train_dataset.y.shape[0],
+    # }
+
     lbd = {
-        (0,0): m_yz[(0,0)]/train_dataset.y.shape[0], 
-        (0,1): m_yz[(0,1)]/train_dataset.y.shape[0],
-        (1,0): m_yz[(0,1)]/train_dataset.y.shape[0],
-        (1,1): m_yz[(1,1)]/train_dataset.y.shape[0],
-          }
+        (0,0): m_yz[(0,0)]/(m_yz[(0,1)] + m_yz[(0,0)]), 
+        (0,1): m_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(0,0)]),
+        (1,0): m_yz[(1,0)]/(m_yz[(1,1)] + m_yz[(1,0)]),
+        (1,1): m_yz[(1,1)]/(m_yz[(1,1)] + m_yz[(1,0)]),
+    }
+    
     
     for round_ in tqdm(range(num_rounds)):
         local_weights, local_losses = [], []
@@ -243,7 +251,7 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
         for idx in idxs_users:
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[idx], batch_size = batch_size, 
-                                       option = option, penalty = penalty, lbd = lbd)
+                                       option = option, penalty = penalty, lbd = lbd, seed = seed)
             w, loss = local_model.update_weights(
                             model=copy.deepcopy(model), global_round=round_, 
                                 learning_rate = learning_rate, local_epochs = local_epochs, 
@@ -267,7 +275,7 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
         for c in range(m):
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[c], batch_size = batch_size, option = option, 
-                                       penalty = penalty, lbd = lbd)
+                                       penalty = penalty, lbd = lbd, seed = seed)
             # validation dataset inference
             acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = model, 
                                                                                       option = option) 
@@ -284,30 +292,37 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
                 n_yz_c[(1,0)], n_yz_c[(1,0)] + n_yz_c[(0,0)]))
             
         if option == "FairBatch": 
-            # update the lambda according to the paper
-            # y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(1,0)]/m_yz[(1,0)])
-            # y1_diff = abs(loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(1,1)]/m_yz[(1,1)])
+            # update the lambda according to the code 
+            # inconsistent with the theory
+            # work very well! -> even better than the one below
+            # y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(0,1)]/m_yz[(0,1)])
+            # y1_diff = abs(loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(1,1)]/m_yz[(1,1)])
             # if y1_diff < y0_diff:
-            #     lbd[(0,0)] -= alpha * (2*int((loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
+            #     lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
             #     lbd[(0,0)] = max(0, lbd[(0,0)])
-            #     lbd[(1,0)] = (m_yz[(0,0)] + m_yz[(1,0)])/train_dataset.y.shape[0] - lbd[(0,0)]
+            #     lbd[(0,1)] = 1 - lbd[(0,0)]
             # else:
-            #     lbd[(0,1)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(0,1)]/m_yz[(0,1)]) > 0)-1)
-            #     lbd[(0,1)] = max(0, lbd[(0,1)])
-            #     lbd[(1,1)] = (m_yz[(0,1)] + m_yz[(1,1)])/train_dataset.y.shape[0] - lbd[(0,1)]
-            
+            #     lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(1,0)]/m_yz[(1,0)]) > 0)-1)
+            #     lbd[(1,0)] = max(0, lbd[(1,0)])
+            #     lbd[(1,1)] = 1 - lbd[(1,0)]
 
-            # update the lambda according to the code
-            y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(0,1)]/m_yz[(0,1)])
-            y1_diff = abs(loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(1,1)]/m_yz[(1,1)])
+            # update the lambda according to the paper -> see Section A.1 of FairBatch
+            # works well! The real batch size would be different from the setting
+            loss_yz[(0,0)] = loss_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
+            loss_yz[(1,0)] = loss_yz[(1,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
+            loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
+            loss_yz[(1,1)] = loss_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
+            
+            y0_diff = abs(loss_yz[(0,0)] - loss_yz[(0,1)])
+            y1_diff = abs(loss_yz[(1,0)] - loss_yz[(1,1)])
             if y1_diff < y0_diff:
-                lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
-                lbd[(0,0)] = max(0, lbd[(0,0)])
+                lbd[(0,0)] += alpha * (2*int((loss_yz[(0,1)] - loss_yz[(0,0)]) > 0)-1)
+                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
                 lbd[(0,1)] = 1 - lbd[(0,0)]
             else:
-                lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(1,0)]/m_yz[(1,0)]) > 0)-1)
-                lbd[(1,0)] = max(0, lbd[(1,0)])
-                lbd[(1,1)] = 1 - lbd[(0,1)]
+                lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)] - loss_yz[(1,0)]) > 0)-1)
+                lbd[(1,0)] = min(max(0, lbd[(1,0)]), 1)
+                lbd[(1,1)] = 1 - lbd[(1,0)]
 
         train_accuracy.append(sum(list_acc)/len(list_acc))
 
@@ -326,12 +341,12 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
     # Test inference after completion of training
     test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size)
 
-    print(f' \n Results after {num_rounds} global rounds of training:')
+    print(f' \n Results after {num_rounds+1} global rounds of training:')
     print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
     print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
 
     # Compute RD: risk difference - fairness metric
     # |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
-    print("|---- Test RD: {:.2f}".format(rd))
+    print("|---- Test RD: {:.4f}".format(rd))
 
     print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
