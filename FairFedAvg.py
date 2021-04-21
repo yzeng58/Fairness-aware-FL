@@ -68,15 +68,15 @@ class ClientUpdate(object):
                 # because PyTorch accumulates the gradients on subsequent backward passes. 
                 # This is convenient while training RNNs
 
-                log_probs, logits = model(features)
+                probas, logits = model(features)
                 loss, _, _ = loss_func(self.option,
-                    logits, labels, logits, sensitive, mean_sensitive, self.penalty)
+                    logits, labels, probas, sensitive, mean_sensitive, self.penalty)
                     
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-                if batch_idx % 50 == 0:
+                if (100. * batch_idx / len(self.trainloader)) % 50 == 0:
                     print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
                         global_round + 1, i, batch_idx * len(features),
                         len(self.trainloader.dataset),
@@ -129,14 +129,14 @@ class ClientUpdate(object):
                 
                 if self.option == "FairBatch":
                 # the objective function have no lagrangian term
-                    loss_yz_,_,_ = loss_func("unconstrained", outputs[group_boolean_idx[yz]], 
+                    loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
-                                         logits[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
+                                         outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
                                          mean_sensitive, self.penalty)
                     loss_yz[yz] += loss_yz_
             
-            batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, outputs, 
-                                                        labels, logits, sensitive, mean_sensitive, self.penalty)
+            batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, logits, 
+                                                        labels, outputs, sensitive, mean_sensitive, self.penalty)
             loss, acc_loss, fair_loss = (loss + batch_loss.item(), 
                                          acc_loss + batch_acc_loss.item(), 
                                          fair_loss + batch_fair_loss.item())
@@ -225,11 +225,18 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
            (0,1): ((train_dataset.y == 0) & (train_dataset.sen == 1)).sum(),
            (1,1): ((train_dataset.y == 1) & (train_dataset.sen == 1)).sum()}
 
+    # lbd = {
+    #     (0,0): m_yz[(0,0)]/train_dataset.y.shape[0], 
+    #     (0,1): m_yz[(0,1)]/train_dataset.y.shape[0],
+    #     (1,0): m_yz[(0,1)]/train_dataset.y.shape[0],
+    #     (1,1): m_yz[(1,1)]/train_dataset.y.shape[0],
+    # }
+
     lbd = {
-        (0,0): m_yz[(0,0)]/train_dataset.y.shape[0], 
-        (0,1): m_yz[(0,1)]/train_dataset.y.shape[0],
-        (1,0): m_yz[(0,1)]/train_dataset.y.shape[0],
-        (1,1): m_yz[(1,1)]/train_dataset.y.shape[0],
+        (0,0): m_yz[(0,0)]/(m_yz[(0,1)] + m_yz[(0,0)]), 
+        (0,1): m_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(0,0)]),
+        (1,0): m_yz[(1,0)]/(m_yz[(1,1)] + m_yz[(1,0)]),
+        (1,1): m_yz[(1,1)]/(m_yz[(1,1)] + m_yz[(1,0)]),
     }
     
     
@@ -301,15 +308,15 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
 
             # update the lambda according to the paper -> see Section A.1 of FairBatch
             # works well! The real batch size would be different from the setting
-            loss_yz[(0,0)] = (loss_yz[(0,0)] - 1)/(m_yz[(0,0)] + m_yz[(1,0)])
+            loss_yz[(0,0)] = loss_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
             loss_yz[(1,0)] = loss_yz[(1,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
-            loss_yz[(0,1)] = (loss_yz[(0,1)] - 1)/(m_yz[(0,1)] + m_yz[(1,1)])
+            loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
             loss_yz[(1,1)] = loss_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
-
+            
             y0_diff = abs(loss_yz[(0,0)] - loss_yz[(0,1)])
             y1_diff = abs(loss_yz[(1,0)] - loss_yz[(1,1)])
             if y1_diff < y0_diff:
-                lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)] - loss_yz[(0,0)]) > 0)-1)
+                lbd[(0,0)] += alpha * (2*int((loss_yz[(0,1)] - loss_yz[(0,0)]) > 0)-1)
                 lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
                 lbd[(0,1)] = 1 - lbd[(0,0)]
             else:

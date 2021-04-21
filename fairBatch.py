@@ -20,10 +20,12 @@ class FairBatch(Sampler):
         self.batch_num = int(self.N / self.batch_size)
         self.lbd = lbd
         
-        self.yz_index = {}
+        self.yz_index, self.yz_size = {}, {}
         
         for y, z in itertools.product([0,1], [0,1]):
                 self.yz_index[(y,z)] = np.where((train_dataset.y == y) & (train_dataset.sen == z))[0]
+                self.yz_size[(y,z)] = len(self.yz_index[(y,z)]) / self.N * self.batch_size
+        
 
     def select_batch_replacement(self, batch_size, full_index, batch_num, replacement = False):
         """Selects a certain number of batches based on the given batch size.
@@ -68,11 +70,11 @@ class FairBatch(Sampler):
         """
 
         # Get the indices for each class
-        sort_index_y_1_z_1 = self.select_batch_replacement(int(self.lbd[(1,1)] * self.batch_size), self.yz_index[(1,1)], self.batch_num)
-        sort_index_y_0_z_1 = self.select_batch_replacement(int(self.lbd[(0,1)] * self.batch_size), self.yz_index[(0,1)], self.batch_num)
-        sort_index_y_1_z_0 = self.select_batch_replacement(int(self.lbd[(1,0)] * self.batch_size), self.yz_index[(1,0)], self.batch_num)
-        sort_index_y_0_z_0 = self.select_batch_replacement(int(self.lbd[(0,0)] * self.batch_size), self.yz_index[(0,0)], self.batch_num)
-
+        sort_index_y_1_z_1 = self.select_batch_replacement(int(self.lbd[(1,1)] * (self.yz_size[(1,1)] + self.yz_size[(1,0)])), self.yz_index[(1,1)], self.batch_num)
+        sort_index_y_0_z_1 = self.select_batch_replacement(int(self.lbd[(0,1)] * (self.yz_size[(0,1)] + self.yz_size[(0,0)])), self.yz_index[(0,1)], self.batch_num)
+        sort_index_y_1_z_0 = self.select_batch_replacement(int(self.lbd[(1,0)] * (self.yz_size[(1,1)] + self.yz_size[(1,0)])), self.yz_index[(1,0)], self.batch_num)
+        sort_index_y_0_z_0 = self.select_batch_replacement(int(self.lbd[(0,0)] * (self.yz_size[(0,1)] + self.yz_size[(0,0)])), self.yz_index[(0,0)], self.batch_num)
+            
 
         for i in range(self.batch_num):
             key_in_fairbatch = sort_index_y_0_z_0[i].copy()
