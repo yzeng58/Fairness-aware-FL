@@ -1,4 +1,4 @@
-import torch, copy, time, random
+import torch, copy, time, random, warnings
 
 import pandas as pd
 import numpy as np
@@ -7,7 +7,6 @@ import torch
 from tqdm import tqdm
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
-from load_adult import *
 from utils import *
 from fairBatch import *
 import torch.nn.functional as F
@@ -15,12 +14,17 @@ from torch.autograd import Variable
 
 from functools import partial
 
+################## MODEL SETTING ########################
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#########################################################
+
 class ClientUpdate(object):
-    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None, seed = 0):
+    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None, seed = 0, mean_sensitive = None):
         self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, option, lbd, seed)
         self.dataset = dataset
         self.option = option
         self.penalty = penalty
+        self.mean_sensitive = mean_sensitive
             
     def train_val(self, dataset, idxs, batch_size, option, lbd, seed):
         """
@@ -70,7 +74,7 @@ class ClientUpdate(object):
 
                 probas, logits = model(features)
                 loss, _, _ = loss_func(self.option,
-                    logits, labels, probas, sensitive, mean_sensitive, self.penalty)
+                    logits, labels, probas, sensitive, self.mean_sensitive, self.penalty)
                     
                 optimizer.zero_grad()
                 loss.backward()
@@ -132,11 +136,11 @@ class ClientUpdate(object):
                     loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
                                          outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
-                                         mean_sensitive, self.penalty)
+                                         self.mean_sensitive, self.penalty)
                     loss_yz[yz] += loss_yz_
             
             batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, logits, 
-                                                        labels, outputs, sensitive, mean_sensitive, self.penalty)
+                                                        labels, outputs, sensitive, self.mean_sensitive, self.penalty)
             loss, acc_loss, fair_loss = (loss + batch_loss.item(), 
                                          acc_loss + batch_acc_loss.item(), 
                                          fair_loss + batch_fair_loss.item())
@@ -147,8 +151,9 @@ class ClientUpdate(object):
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, None
 
 # TODO: need to update the criterion to loss_func
-def test_inference(model, test_dataset, batch_size):
-    """ Returns the test accuracy and loss.
+def test_inference(model, test_dataset, batch_size, disparity):
+    """ 
+    Returns the test accuracy and loss.
     """
 
     model.eval()
@@ -179,19 +184,71 @@ def test_inference(model, test_dataset, batch_size):
 
     accuracy = correct/total
     # |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
-    return accuracy, loss, RD(n_yz)
+    return accuracy, loss, disparity(n_yz)
 
-def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
-          num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, 
-          num_workers = 4, print_every = 1,
-         penalty = 1, alpha = 0.005, seed = 123):
+def train(model, dataset_info, option = "unconstrained", batch_size = 128, 
+          num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
+          num_workers = 4, print_every = 1, fraction_clients = 1,
+         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None):
     """
     Server execution.
+
+    Parameters
+    ----------
+    model: torch.nn.Module object.
+
+    dataset_info: a list of three objects.
+        - train_dataset: Dataset object.
+        - test_dataset: Dataset object.
+        - clients_idx: a list of lists, with each sublist contains the indexs of the training samples in one client.
+                the length of the list is the number of clients.
+
+    option: "unconstrained", "Zafar", "FairBatch".
+
+    batch_size: a positive integer.
+
+    num_rounds: a positive integer, the number of rounds the server needs to excute.
+
+    learning_rate: a positive value, hyperparameter, the learning rate of the weights in neural network.
+
+    optimizer: two options, "sgd" or "adam".
+
+    local_epochs: a positive integer, the number of local epochs clients excutes in each global round.
+
+    metric: three options, "Risk Difference", "pRule", "Demographic disparity".
+
+    num_workers: number of workers.
+
+    print_every: a positive integer. eg. print_every = 1 -> print the information of that global round every 1 round.
+
+    fraction_clients: float from 0 to 1. The fraction of clients chose to update the weights in each round.
+
+    penalty: a positive value, the lagrangian multiplier for Zafar et al. approach.
+
+    alpha: a positive value, the learning rate of the minibatch selection ratio/weights.
+
+    seed: random seed.
+
+    mean_sensitive: the mean value of the sensitive attribute. Need to be set when the option is "Zafar".
     """
-    
+
+    train_dataset, test_dataset, clients_idx = dataset_info
+    num_clients = len(clients_idx)
+
     np.random.seed(seed)
     random.seed(seed)
-        
+
+    if metric == "Risk Difference":
+        disparity = riskDifference
+    elif metric == "pRule":
+        disparity = pRule
+    elif metric == "Demographic disparity":
+        disparity = DPDisparity
+    else:
+        warnings.warn("Warning message: metric " + metric + " is not supported! Use the default metric risk difference. ")
+        disparity = riskDifference
+        metric = "Risk Difference"
+    
     # Training
     train_loss, train_accuracy = [], []
     val_acc_list, net_list = [], []
@@ -245,13 +302,13 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
         print(f'\n | Global Training Round : {round_+1} |\n')
 
         model.train()
-        m = 2 # the number of clients to be chosen in each round_
+        m = max(1, int(fraction_clients * num_clients)) # the number of clients to be chosen in each round_
         idxs_users = np.random.choice(range(num_clients), m, replace=False)
 
         for idx in idxs_users:
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[idx], batch_size = batch_size, 
-                                       option = option, penalty = penalty, lbd = lbd, seed = seed)
+                                       option = option, penalty = penalty, lbd = lbd, seed = seed, mean_sensitive = mean_sensitive)
             w, loss = local_model.update_weights(
                             model=copy.deepcopy(model), global_round=round_, 
                                 learning_rate = learning_rate, local_epochs = local_epochs, 
@@ -275,7 +332,7 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
         for c in range(m):
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[c], batch_size = batch_size, option = option, 
-                                       penalty = penalty, lbd = lbd, seed = seed)
+                                       penalty = penalty, lbd = lbd, seed = seed, mean_sensitive = mean_sensitive)
             # validation dataset inference
             acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = model, 
                                                                                       option = option) 
@@ -287,27 +344,12 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
                 
                 if option == "FairBatch": loss_yz[yz] += loss_yz_c[yz]
                 
-            print("Client %d: accuracy loss: %.2f | fairness loss %.2f | RD = %.2f = |%d/%d-%d/%d| " % (
-                c, acc_loss, fair_loss, RD(n_yz_c), n_yz_c[(1,1)], n_yz_c[(1,1)] + n_yz_c[(0,1)], 
-                n_yz_c[(1,0)], n_yz_c[(1,0)] + n_yz_c[(0,0)]))
+            print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
+                c, acc_loss, fair_loss, metric, disparity(n_yz_c)))
             
         if option == "FairBatch": 
-            # update the lambda according to the code 
-            # inconsistent with the theory
-            # work very well! -> even better than the one below
-            # y0_diff = abs(loss_yz[(0,0)]/m_yz[(0,0)] - loss_yz[(0,1)]/m_yz[(0,1)])
-            # y1_diff = abs(loss_yz[(1,0)]/m_yz[(1,0)] - loss_yz[(1,1)]/m_yz[(1,1)])
-            # if y1_diff < y0_diff:
-            #     lbd[(0,0)] -= alpha * (2*int((loss_yz[(0,1)]/m_yz[(0,1)] - loss_yz[(0,0)]/m_yz[(0,0)]) > 0)-1)
-            #     lbd[(0,0)] = max(0, lbd[(0,0)])
-            #     lbd[(0,1)] = 1 - lbd[(0,0)]
-            # else:
-            #     lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)]/m_yz[(1,1)] - loss_yz[(1,0)]/m_yz[(1,0)]) > 0)-1)
-            #     lbd[(1,0)] = max(0, lbd[(1,0)])
-            #     lbd[(1,1)] = 1 - lbd[(1,0)]
-
             # update the lambda according to the paper -> see Section A.1 of FairBatch
-            # works well! The real batch size would be different from the setting
+            # works well! The real batch size would be slightly different from the setting
             loss_yz[(0,0)] = loss_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
             loss_yz[(1,0)] = loss_yz[(1,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
             loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
@@ -330,23 +372,22 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
         if (round_+1) % print_every == 0:
             print(f' \nAvg Training Stats after {round_+1} global rounds:')
             if option != "FairBatch":
-                print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation RD: %.4f" % (
+                print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation %s: %.4f" % (
                      np.mean(np.array(train_loss)), 
-                    100*train_accuracy[-1], RD(n_yz)))
+                    100*train_accuracy[-1], metric, disparity(n_yz)))
             else:
-                print("Training loss: %.2f | Training accuracy: %.2f%% | Training RD: %.4f" % (
+                print("Training loss: %.2f | Training accuracy: %.2f%% | Training %s: %.4f" % (
                      np.mean(np.array(train_loss)), 
-                    100*train_accuracy[-1], RD(n_yz)))
+                    100*train_accuracy[-1], metric, disparity(n_yz)))
 
     # Test inference after completion of training
-    test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size)
+    test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
 
     print(f' \n Results after {num_rounds+1} global rounds of training:')
     print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
     print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
 
-    # Compute RD: risk difference - fairness metric
-    # |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
-    print("|---- Test RD: {:.4f}".format(rd))
+    # Compute fairness metric
+    print("|---- Test "+ metric+": {:.4f}".format(rd))
 
     print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))

@@ -3,6 +3,18 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 import torch.nn.functional as F
 
+class LoadData(Dataset):
+    def __init__(self, df, pred_var, sen_var):
+        self.y = df[pred_var].values
+        self.x = df.drop(pred_var, axis = 1).values
+        self.sen = df[sen_var].values
+    
+    def __getitem__(self, index):
+        return torch.tensor(self.x[index]), torch.tensor(self.y[index]), torch.tensor(self.sen[index])
+    
+    def __len__(self):
+        return self.y.shape[0]
+
 class DatasetSplit(Dataset):
     """
     An abstract Dataset class wrapped around Pytorch Dataset class.
@@ -37,11 +49,34 @@ class logReg(torch.nn.Module):
         probas = torch.sigmoid(logits)
         return probas.type(torch.FloatTensor), logits
     
-def RD(n_yz):
+def riskDifference(n_yz):
     """
     Given a dictionary of number of samples in different groups, compute the risk difference.
+    |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
     """
-    return abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - n_yz[(1,0)]/(n_yz[(0,0)] + n_yz[(1,0)]))
+    try:
+        return abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - n_yz[(1,0)]/(n_yz[(0,0)] + n_yz[(1,0)]))
+    except ZeroDivisionError:
+        return np.nan
+
+def pRule(n_yz):
+    """
+    Compute the p rule level.
+    min(P(Group1, pos)/P(Group2, pos), P(Group2, pos)/P(Group1, pos))
+    """
+    return min(n_yz[(1,1)]/n_yz[(1,0)], n_yz[(1,0)]/n_yz[(1,1)])
+
+def DPDisparity(n_yz):
+    """
+    Same metric as FairBatch. Compute the demographic disparity.
+    max(|P(pos | Group1) - P(pos)|, |P(pos | Group2) - P(pos)|)
+    """
+    p_y1 = (n_yz[(1,0)] + n_yz[(1,1)])/(n_yz[(1,0)] + n_yz[(1,1)] + n_yz[(0,0)] + n_yz[(0,1)]) # P(y == 1)
+    try:
+        return max(abs(n_yz[(1,0)]/(n_yz[(1,0)] + n_yz[(0,0)]) - p_y1), 
+            abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - p_y1))
+    except ZeroDivisionError:
+        return np.nan
 
 def loss_func(option, logits, targets, outputs, sensitive, mean_sensitive, larg = 1):
     """
