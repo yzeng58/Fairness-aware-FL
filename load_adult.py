@@ -66,7 +66,7 @@ if __name__ == "load_adult":
     np.random.seed(1)
     adult_private_idx = adult[adult['workclass_ Private'] == 1].index
     adult_others_idx = adult[adult['workclass_ Private'] == 0].index
-    mean_sensitive = (adult['sex_ Female'] == 1).mean()
+    adult_mean_sensitive = (adult['sex_ Female'] == 1).mean()
     
     client1_idx = np.concatenate((np.random.choice(adult_private_idx, int(.8*len(adult_private_idx)), replace = False),
                                     np.random.choice(adult_others_idx, int(.2*len(adult_others_idx)), replace = False)))
@@ -81,13 +81,8 @@ if __name__ == "load_adult":
     clients = [client1, client2]
 
     ################## torch preparation ##################
-
-    ################## MODEL SETTING ########################
-    RANDOM_SEED = 123
-    DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     NUM_FEATURES = len(adult.columns)-1
-    SEN_VAR = "sex"
-    #########################################################
+
     client1_dataset = LoadData(client1, 'salary', 'sex_ Female')
 
     client2_dataset = LoadData(client2, 'salary', 'sex_ Female')

@@ -7,7 +7,6 @@ import torch
 from tqdm import tqdm
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
-from load_adult import *
 from utils import *
 from fairBatch import *
 import torch.nn.functional as F
@@ -15,12 +14,17 @@ from torch.autograd import Variable
 
 from functools import partial
 
+################## MODEL SETTING ########################
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#########################################################
+
 class ClientUpdate(object):
-    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None, seed = 0):
+    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None, seed = 0, mean_sensitive = None):
         self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, option, lbd, seed)
         self.dataset = dataset
         self.option = option
         self.penalty = penalty
+        self.mean_sensitive = mean_sensitive
             
     def train_val(self, dataset, idxs, batch_size, option, lbd, seed):
         """
@@ -70,7 +74,7 @@ class ClientUpdate(object):
 
                 probas, logits = model(features)
                 loss, _, _ = loss_func(self.option,
-                    logits, labels, probas, sensitive, mean_sensitive, self.penalty)
+                    logits, labels, probas, sensitive, self.mean_sensitive, self.penalty)
                     
                 optimizer.zero_grad()
                 loss.backward()
@@ -132,11 +136,11 @@ class ClientUpdate(object):
                     loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
                                          outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
-                                         mean_sensitive, self.penalty)
+                                         self.mean_sensitive, self.penalty)
                     loss_yz[yz] += loss_yz_
             
             batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, logits, 
-                                                        labels, outputs, sensitive, mean_sensitive, self.penalty)
+                                                        labels, outputs, sensitive, self.mean_sensitive, self.penalty)
             loss, acc_loss, fair_loss = (loss + batch_loss.item(), 
                                          acc_loss + batch_acc_loss.item(), 
                                          fair_loss + batch_fair_loss.item())
@@ -181,10 +185,10 @@ def test_inference(model, test_dataset, batch_size):
     # |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
     return accuracy, loss, RD(n_yz)
 
-def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
+def train(model, train_dataset, test_dataset, clients_idx, option = "unconstrained", batch_size = 128, num_clients = 2,
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, 
           num_workers = 4, print_every = 1,
-         penalty = 1, alpha = 0.005, seed = 123):
+         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None):
     """
     Server execution.
     """
@@ -251,7 +255,7 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
         for idx in idxs_users:
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[idx], batch_size = batch_size, 
-                                       option = option, penalty = penalty, lbd = lbd, seed = seed)
+                                       option = option, penalty = penalty, lbd = lbd, seed = seed, mean_sensitive = mean_sensitive)
             w, loss = local_model.update_weights(
                             model=copy.deepcopy(model), global_round=round_, 
                                 learning_rate = learning_rate, local_epochs = local_epochs, 
@@ -275,7 +279,7 @@ def train(model, option = "unconstrained", batch_size = 128, num_clients = 2,
         for c in range(m):
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[c], batch_size = batch_size, option = option, 
-                                       penalty = penalty, lbd = lbd, seed = seed)
+                                       penalty = penalty, lbd = lbd, seed = seed, mean_sensitive = mean_sensitive)
             # validation dataset inference
             acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = model, 
                                                                                       option = option) 
