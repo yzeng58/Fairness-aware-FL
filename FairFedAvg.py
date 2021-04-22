@@ -186,9 +186,9 @@ def test_inference(model, test_dataset, batch_size, disparity):
     # |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
     return accuracy, loss, disparity(n_yz)
 
-def train(model, train_dataset, test_dataset, clients_idx, option = "unconstrained", batch_size = 128, 
+def train(model, dataset_info, option = "unconstrained", batch_size = 128, 
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
-          num_workers = 4, print_every = 1,
+          num_workers = 4, print_every = 1, fraction_clients = 1,
          penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None):
     """
     Server execution.
@@ -197,11 +197,10 @@ def train(model, train_dataset, test_dataset, clients_idx, option = "unconstrain
     ----------
     model: torch.nn.Module object.
 
-    train_dataset: Dataset object.
-
-    test_dataset: Dataset object.
-
-    clients_idx: a list of lists, with each sublist contains the indexs of the training samples in one client.
+    dataset_info: a list of three objects.
+        - train_dataset: Dataset object.
+        - test_dataset: Dataset object.
+        - clients_idx: a list of lists, with each sublist contains the indexs of the training samples in one client.
                 the length of the list is the number of clients.
 
     option: "unconstrained", "Zafar", "FairBatch".
@@ -222,6 +221,8 @@ def train(model, train_dataset, test_dataset, clients_idx, option = "unconstrain
 
     print_every: a positive integer. eg. print_every = 1 -> print the information of that global round every 1 round.
 
+    fraction_clients: float from 0 to 1. The fraction of clients chose to update the weights in each round.
+
     penalty: a positive value, the lagrangian multiplier for Zafar et al. approach.
 
     alpha: a positive value, the learning rate of the minibatch selection ratio/weights.
@@ -231,7 +232,9 @@ def train(model, train_dataset, test_dataset, clients_idx, option = "unconstrain
     mean_sensitive: the mean value of the sensitive attribute. Need to be set when the option is "Zafar".
     """
     
+    train_dataset, test_dataset, clients_idx = dataset_info
     num_clients = len(clients_idx)
+
     np.random.seed(seed)
     random.seed(seed)
 
@@ -242,7 +245,7 @@ def train(model, train_dataset, test_dataset, clients_idx, option = "unconstrain
     elif metric == "Demographic disparity":
         disparity = DPDisparity
     else:
-        warnings.warn("Warning message: metric %s is not supported! Use the default metric risk difference" % metric)
+        warnings.warn("Warning message: metric " + metric + " is not supported! Use the default metric risk difference. ")
         disparity = riskDifference
     
     # Training
@@ -298,7 +301,7 @@ def train(model, train_dataset, test_dataset, clients_idx, option = "unconstrain
         print(f'\n | Global Training Round : {round_+1} |\n')
 
         model.train()
-        m = 2 # the number of clients to be chosen in each round_
+        m = max(1, int(fraction_clients * num_clients)) # the number of clients to be chosen in each round_
         idxs_users = np.random.choice(range(num_clients), m, replace=False)
 
         for idx in idxs_users:

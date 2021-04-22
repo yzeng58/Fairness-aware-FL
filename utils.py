@@ -3,6 +3,18 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 import torch.nn.functional as F
 
+class LoadData(Dataset):
+    def __init__(self, df, pred_var, sen_var):
+        self.y = df[pred_var].values
+        self.x = df.drop(pred_var, axis = 1).values
+        self.sen = df[sen_var].values
+    
+    def __getitem__(self, index):
+        return torch.tensor(self.x[index]), torch.tensor(self.y[index]), torch.tensor(self.sen[index])
+    
+    def __len__(self):
+        return self.y.shape[0]
+
 class DatasetSplit(Dataset):
     """
     An abstract Dataset class wrapped around Pytorch Dataset class.
