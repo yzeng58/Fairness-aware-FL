@@ -54,7 +54,10 @@ def riskDifference(n_yz):
     Given a dictionary of number of samples in different groups, compute the risk difference.
     |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
     """
-    return abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - n_yz[(1,0)]/(n_yz[(0,0)] + n_yz[(1,0)]))
+    try:
+        return abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - n_yz[(1,0)]/(n_yz[(0,0)] + n_yz[(1,0)]))
+    except ZeroDivisionError:
+        return np.nan
 
 def pRule(n_yz):
     """
@@ -69,8 +72,11 @@ def DPDisparity(n_yz):
     max(|P(pos | Group1) - P(pos)|, |P(pos | Group2) - P(pos)|)
     """
     p_y1 = (n_yz[(1,0)] + n_yz[(1,1)])/(n_yz[(1,0)] + n_yz[(1,1)] + n_yz[(0,0)] + n_yz[(0,1)]) # P(y == 1)
-    return max(abs(n_yz[(1,0)]/(n_yz[(1,0)] + n_yz[(0,0)]) - p_y1), 
-        abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - p_y1))
+    try:
+        return max(abs(n_yz[(1,0)]/(n_yz[(1,0)] + n_yz[(0,0)]) - p_y1), 
+            abs(n_yz[(1,1)]/(n_yz[(1,1)] + n_yz[(0,1)]) - p_y1))
+    except ZeroDivisionError:
+        return np.nan
 
 def loss_func(option, logits, targets, outputs, sensitive, mean_sensitive, larg = 1):
     """

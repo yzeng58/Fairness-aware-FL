@@ -231,7 +231,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
 
     mean_sensitive: the mean value of the sensitive attribute. Need to be set when the option is "Zafar".
     """
-    
+
     train_dataset, test_dataset, clients_idx = dataset_info
     num_clients = len(clients_idx)
 
@@ -247,6 +247,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     else:
         warnings.warn("Warning message: metric " + metric + " is not supported! Use the default metric risk difference. ")
         disparity = riskDifference
+        metric = "Risk Difference"
     
     # Training
     train_loss, train_accuracy = [], []

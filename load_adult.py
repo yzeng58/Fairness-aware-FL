@@ -59,20 +59,9 @@ if __name__ == "load_adult":
                                     np.random.choice(adult_others_idx, int(.2*len(adult_others_idx)), replace = False)))
     client2_idx = np.array(list(set(adult.index) - set(client1_idx)))
     adult_clients_idx = [client1_idx, client2_idx]
-    client1 = adult.iloc[adult_clients_idx[0]]
-    client1 = client1.reset_index(drop=True)
-
-    client2 = adult.iloc[adult_clients_idx[1]]
-    client2 = client2.reset_index(drop=True)
-
-    clients = [client1, client2]
-
+    
     ################## torch preparation ##################
     adult_num_features = len(adult.columns)-1
-
-    client1_dataset = LoadData(client1, 'salary', 'sex_ Female')
-
-    client2_dataset = LoadData(client2, 'salary', 'sex_ Female')
 
     adult_test = LoadData(test, 'salary', 'sex_ Female')
     
