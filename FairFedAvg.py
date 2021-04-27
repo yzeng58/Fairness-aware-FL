@@ -190,7 +190,7 @@ def test_inference(model, test_dataset, batch_size, disparity):
 def train(model, dataset_info, option = "unconstrained", batch_size = 128, 
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
           num_workers = 4, print_every = 1, fraction_clients = 1,
-         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False):
+         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True):
     """
     Server execution.
 
@@ -233,6 +233,8 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     mean_sensitive: the mean value of the sensitive attribute. Need to be set when the option is "Zafar".
 
     ret: boolean value. If true, return the accuracy and fairness measure and print nothing; else print the log and return None.
+
+    train_prn: boolean value. If true, print the batch loss in local epochs.
     """
     prn = not ret
     train_dataset, test_dataset, clients_idx = dataset_info
@@ -305,7 +307,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[idx], batch_size = batch_size, 
                                        option = option, penalty = penalty, lbd = lbd, 
-                                       seed = seed, mean_sensitive = mean_sensitive, prn = prn)
+                                       seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
             w, loss = local_model.update_weights(
                             model=copy.deepcopy(model), global_round=round_, 
                                 learning_rate = learning_rate, local_epochs = local_epochs, 
@@ -330,7 +332,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
             local_model = ClientUpdate(dataset=train_dataset,
                                         idxs=clients_idx[c], batch_size = batch_size, option = option, 
                                        penalty = penalty, lbd = lbd, seed = seed, 
-                                       mean_sensitive = mean_sensitive, prn = prn)
+                                       mean_sensitive = mean_sensitive, prn = train_prn)
             # validation dataset inference
             acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = model, 
                                                                                       option = option) 
