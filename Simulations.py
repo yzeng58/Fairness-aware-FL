@@ -1,5 +1,3 @@
-# import the synthetic dataset
-from syntheticDataGenerate import *
 # import the training method 
 from FairFedAvg import *
 

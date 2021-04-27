@@ -54,7 +54,8 @@ def test_inference(model, test_dataset, batch_size, disparity):
 def train(model, dataset_info, option = "unconstrained", batch_size = 128, 
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
           num_workers = 4, print_every = 1, fraction_clients = 1,
-         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True):
+         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True,
+         adaptive_alpha = False):
     """
     Server execution.
 
@@ -99,6 +100,8 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     ret: boolean value. If true, return the accuracy and fairness measure and print nothing; else print the log and return None.
 
     train_prn: boolean value. If true, print the batch loss in local epochs.
+
+    adaptive_alpha: in FairBatch method, change the value of alpha as fairness bias become small.
     """
 
     prn = not ret
@@ -247,6 +250,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                         np.mean(np.array(train_loss)), 
                         100*train_accuracy[-1], metric, disparity(n_yz)))
 
+    if adaptive_alpha: alpha = DPDisparity(n_yz)
     # Test inference after completion of training
     test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
 
