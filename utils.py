@@ -124,6 +124,7 @@ def Z_MEAN(x, y):
 def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500, 
                 y_mean = 0.6, client_split = ((.5, .2), (.3, .4), (.2, .4))):
     np.random.seed(seed)
+    random.seed(seed)
         
     num_samples = train_samples + test_samples
     ys = np.random.binomial(n = 1, p = y_mean, size = num_samples)

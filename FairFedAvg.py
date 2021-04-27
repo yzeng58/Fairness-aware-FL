@@ -250,7 +250,8 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                         np.mean(np.array(train_loss)), 
                         100*train_accuracy[-1], metric, disparity(n_yz)))
 
-    if adaptive_alpha: alpha = DPDisparity(n_yz)
+        if adaptive_alpha: alpha = DPDisparity(n_yz)
+        
     # Test inference after completion of training
     test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
 
