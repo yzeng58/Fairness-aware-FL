@@ -105,11 +105,14 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     """
 
     prn = not ret
+    if ret: train_prn = False
+
     train_dataset, test_dataset, clients_idx = dataset_info
     num_clients = len(clients_idx)
 
     np.random.seed(seed)
     random.seed(seed)
+    torch.manual_seed(seed)
 
     if metric == "Risk Difference":
         disparity = riskDifference
@@ -251,7 +254,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                         100*train_accuracy[-1], metric, disparity(n_yz)))
 
         if adaptive_alpha: alpha = DPDisparity(n_yz)
-        
+
     # Test inference after completion of training
     test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
 

@@ -32,6 +32,7 @@ class ClientUpdate(object):
         Returns train, validation for a given local training dataset
         and user indexes.
         """
+        torch.manual_seed(seed)
         
         # split indexes for train, validation (90, 10)
         idxs_train = idxs[:int(0.9*len(idxs))]
