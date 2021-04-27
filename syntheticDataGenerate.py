@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
 from torch.utils.data import DataLoader, Dataset
-import torch
+import torch, random
 from utils import *
 
 ########################
@@ -25,10 +25,16 @@ def Z_MEAN(x, y):
     )
 ########################
 
-def dataGenerate(seed = 432, num_samples = 3500, train_samples = 3000, 
-                y_mean = 0.6):
+# 3 clients: 
+#           client 1: %50 z = 1, %20 z = 0
+#           client 2: %30 z = 1, %40 z = 0
+#           client 3: %20 z = 1, %40 z = 0
+
+def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500, 
+                y_mean = 0.6, client_split = ((.5, .2), (.3, .4), (.2, .4))):
     np.random.seed(seed)
         
+    num_samples = train_samples + test_samples
     ys = np.random.binomial(n = 1, p = y_mean, size = num_samples)
 
     xs, zs = [], []
@@ -45,15 +51,14 @@ def dataGenerate(seed = 432, num_samples = 3500, train_samples = 3000,
     
     z1_idx = train_data[train_data.z == 1].index
     z0_idx = train_data[train_data.z == 0].index
-    
-    # 3 clients: 
-    #           client 1: %60 z = 1, %10 z = 0
-    #           client 2: %30 z = 1, %50 z = 0
-    #           client 3: %10 z = 1, %40 z = 0
 
-    client1_idx = np.concatenate((z1_idx[:int(.6*len(z1_idx))], z0_idx[:int(.1*len(z0_idx))]))
-    client2_idx = np.concatenate((z1_idx[int(.6*len(z1_idx)):int(.9*len(z1_idx))], z0_idx[int(.1*len(z0_idx)):int(.6*len(z0_idx))]))
-    client3_idx = np.concatenate((z1_idx[int(.9*len(z1_idx)):], z0_idx[int(.6*len(z0_idx)):]))
+    client1_idx = np.concatenate((z1_idx[:int(client_split[0][0]*len(z1_idx))], z0_idx[:int(client_split[0][1]*len(z0_idx))]))
+    client2_idx = np.concatenate((z1_idx[int(client_split[0][0]*len(z1_idx)):int((client_split[0][0] + client_split[1][0])*len(z1_idx))],
+                                  z0_idx[int(client_split[0][1]*len(z0_idx)):int((client_split[0][1] + client_split[1][1])*len(z0_idx))]))
+    client3_idx = np.concatenate((z1_idx[int((client_split[0][0] + client_split[1][0])*len(z1_idx)):], z0_idx[int((client_split[0][1] + client_split[1][1])*len(z0_idx)):]))
+    random.shuffle(client1_idx)
+    random.shuffle(client2_idx)
+    random.shuffle(client3_idx)
 
     clients_idx = [client1_idx, client2_idx, client3_idx]
     train_dataset = LoadData(train_data, "y", "z")
