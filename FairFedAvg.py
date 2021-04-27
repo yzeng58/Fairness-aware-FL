@@ -141,15 +141,19 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                         batch_size = batch_size,
                         num_workers = num_workers)
 
-    def average_weights(w):
+    def average_weights(w, clients_idx, idx_users):
         """
         Returns the average of the weights.
         """
         w_avg = copy.deepcopy(w[0])
-        for key in w_avg.keys():
-            for i in range(1, len(w)):
-                w_avg[key] += w[i][key]
-            w_avg[key] = torch.div(w_avg[key], len(w))
+        num_samples = 0
+        for i in range(1, len(w)):
+            num_samples += len(clients_idx[idx_users[i]])
+            for key in w_avg.keys():            
+                w_avg[key] += w[i][key] * len(clients_idx[idx_users[i]])
+            
+        for key in w_avg.keys(): 
+            w_avg[key] = torch.div(w_avg[key], num_samples)
         return w_avg
 
     # the number of samples whose label is y and sensitive attribute is z
@@ -188,7 +192,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
             local_losses.append(copy.deepcopy(loss))
 
         # update global weights
-        weights = average_weights(local_weights)
+        weights = average_weights(local_weights, clients_idx, idxs_users)
         model.load_state_dict(weights)
 
         loss_avg = sum(local_losses) / len(local_losses)
@@ -257,6 +261,9 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
 
     # Test inference after completion of training
     test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
+
+    # if option == "threshold adjusting": 
+        
 
     if prn:
         print(f' \n Results after {num_rounds+1} global rounds of training:')
