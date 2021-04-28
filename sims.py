@@ -1,12 +1,10 @@
-# import the synthetic dataset
-from syntheticDataGenerate import *
 # import the training method 
 from FairFedAvg import *
 
 import time
 
-def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 20, 
-          local_epochs = 40, alpha = 0.05, metric = "Demographic disparity"):
+def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 5, 
+          local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch"):
     """
     Run simulations.
     """
@@ -16,7 +14,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
     
     for i in range(num_sim):
         seed = int(time.time()%1000)
-        print("  |  Simulation : %d | " % (i+1))
+        print("|  Simulation : %d | " % (i+1))
         print("      seed : %d -----" % seed)
         
         # generate the synthetic dataset
@@ -24,8 +22,9 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         
         # train the model with the synthetic dataset
         test_acc_i, rd_i = train(logReg(num_features=3, num_classes=2), synthetic_info,
-          option = "FairBatch", optimizer = 'sgd', learning_rate = learning_rate, metric = metric,
-          num_rounds = num_rounds, local_epochs = local_epochs, alpha = alpha, ret = True, seed = seed)
+          option = option, optimizer = 'sgd', learning_rate = learning_rate, metric = metric,
+          num_rounds = num_rounds, local_epochs = local_epochs, alpha = alpha, ret = True, seed = seed,
+          train_prn = False, adaptive_alpha = adaptive_alpha)
         
         test_acc.append(test_acc_i)
         rd.append(rd_i)

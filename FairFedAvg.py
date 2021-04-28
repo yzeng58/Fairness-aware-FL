@@ -1,158 +1,22 @@
 import torch, copy, time, random, warnings
 
-import pandas as pd
 import numpy as np
 
 import torch
 from tqdm import tqdm
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
+
+from ClientUpdate import *
 from utils import *
 from fairBatch import *
-import torch.nn.functional as F
-from torch.autograd import Variable
-
-from functools import partial
 
 ################## MODEL SETTING ########################
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 #########################################################
 
-class ClientUpdate(object):
-    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None, seed = 0, mean_sensitive = None, prn = True):
-        self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, option, lbd, seed)
-        self.dataset = dataset
-        self.option = option
-        self.penalty = penalty
-        self.mean_sensitive = mean_sensitive
-        self.prn = prn
-            
-    def train_val(self, dataset, idxs, batch_size, option, lbd, seed):
-        """
-        Returns train, validation for a given local training dataset
-        and user indexes.
-        """
-        
-        # split indexes for train, validation (90, 10)
-        idxs_train = idxs[:int(0.9*len(idxs))]
-        idxs_val = idxs[int(0.9*len(idxs)):len(idxs)]
-        
-        if option == "FairBatch": 
-            # FairBatch(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0)
-            sampler = FairBatch(DatasetSplit(dataset, idxs_train), lbd, idxs,
-                                 batch_size = batch_size, replacement = False, seed = seed)
-            trainloader = DataLoader(DatasetSplit(dataset, idxs_train), sampler = sampler,
-                                     batch_size=batch_size, num_workers = 0)
-                        
-        else:
-            trainloader = DataLoader(DatasetSplit(dataset, idxs_train),
-                                     batch_size=batch_size, shuffle=True)
-
-        validloader = DataLoader(DatasetSplit(dataset, idxs_val),
-                                     batch_size=int(len(idxs_val)/10), shuffle=False)
-        return trainloader, validloader
-
-    def update_weights(self, model, global_round, learning_rate, local_epochs, optimizer):
-        # Set mode to train model
-        model.train()
-        epoch_loss = []
-
-        # Set optimizer for the local updates
-        if optimizer == 'sgd':
-            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
-                                        ) # momentum=0.5
-        elif optimizer == 'adam':
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                         weight_decay=1e-4)
-
-        for i in range(local_epochs):
-            batch_loss = []
-            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                # we need to set the gradients to zero before starting to do backpropragation 
-                # because PyTorch accumulates the gradients on subsequent backward passes. 
-                # This is convenient while training RNNs
-
-                probas, logits = model(features)
-                loss, _, _ = loss_func(self.option,
-                    logits, labels, probas, sensitive, self.mean_sensitive, self.penalty)
-                    
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
-                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
-                        global_round + 1, i, batch_idx * len(features),
-                        len(self.trainloader.dataset),
-                        100. * batch_idx / len(self.trainloader), loss.item()))
-                batch_loss.append(loss.item())
-            epoch_loss.append(sum(batch_loss)/len(batch_loss))
-
-        # weight, loss
-        return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
-
-    def inference(self, model, option):
-        """ 
-        Returns the inference accuracy, 
-                                loss, 
-                                N(sensitive group, pos), 
-                                N(non-sensitive group, pos), 
-                                N(sensitive group),
-                                N(non-sensitive group),
-                                acc_loss,
-                                fair_loss
-        """
-
-        model.eval()
-        loss, total, correct, fair_loss, acc_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-        loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-        
-        # dataset = self.validloader if option != "FairBatch" else self.dataset
-        for batch_idx, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-            sensitive = sensitive.to(DEVICE)
-            
-            # Inference
-            outputs, logits = model(features)
-
-            # Prediction
-            _, pred_labels = torch.max(outputs, 1)
-            pred_labels = pred_labels.view(-1)
-            bool_correct = torch.eq(pred_labels, labels)
-            correct += torch.sum(bool_correct).item()
-            total += len(labels)
-            num_batch += 1
-            
-            group_boolean_idx = {}
-            
-            
-            for yz in n_yz:
-                group_boolean_idx[yz] = (pred_labels == yz[0]) & (sensitive == yz[1])
-                n_yz[yz] += torch.sum(group_boolean_idx[yz]).item()     
-                
-                if self.option == "FairBatch":
-                # the objective function have no lagrangian term
-                    loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
-                                                    labels[group_boolean_idx[yz]], 
-                                         outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
-                                         self.mean_sensitive, self.penalty)
-                    loss_yz[yz] += loss_yz_
-            
-            batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, logits, 
-                                                        labels, outputs, sensitive, self.mean_sensitive, self.penalty)
-            loss, acc_loss, fair_loss = (loss + batch_loss.item(), 
-                                         acc_loss + batch_acc_loss.item(), 
-                                         fair_loss + batch_fair_loss.item())
-        accuracy = correct/total
-        if option == "FairBatch":
-            return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, loss_yz
-        else:
-            return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, None
-
 # TODO: need to update the criterion to loss_func
-def test_inference(model, test_dataset, batch_size, disparity):
+def test_inference(model, test_dataset, batch_size, disparity, ret_n_yz = False):
     """ 
     Returns the test accuracy and loss.
     """
@@ -185,12 +49,16 @@ def test_inference(model, test_dataset, batch_size, disparity):
 
     accuracy = correct/total
     # |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
-    return accuracy, loss, disparity(n_yz)
+    if ret_n_yz:
+        return accuracy, n_yz
+    else:
+        return accuracy, loss, disparity(n_yz)
 
 def train(model, dataset_info, option = "unconstrained", batch_size = 128, 
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
           num_workers = 4, print_every = 1, fraction_clients = 1,
-         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True):
+         penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True,
+         adaptive_alpha = False, epsilon = 0.01, adjusting_rounds = 10, adjusting_epochs = 20, adjusting_alpha = 0.05):
     """
     Server execution.
 
@@ -212,7 +80,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
 
     learning_rate: a positive value, hyperparameter, the learning rate of the weights in neural network.
 
-    optimizer: two options, "sgd" or "adam".
+    optimizer: two options, "sgd" or "adam".      
 
     local_epochs: a positive integer, the number of local epochs clients excutes in each global round.
 
@@ -235,13 +103,21 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     ret: boolean value. If true, return the accuracy and fairness measure and print nothing; else print the log and return None.
 
     train_prn: boolean value. If true, print the batch loss in local epochs.
+
+    adaptive_alpha: in FairBatch method, change the value of alpha as fairness bias become small.
+
+    epsilon: for threshold adjusting method, given demographic disparity and update the threshold for each sensitive group.
     """
+
     prn = not ret
+    if ret: train_prn = False
+
     train_dataset, test_dataset, clients_idx = dataset_info
     num_clients = len(clients_idx)
 
     np.random.seed(seed)
     random.seed(seed)
+    torch.manual_seed(seed)
 
     if metric == "Risk Difference":
         disparity = riskDifference
@@ -270,17 +146,6 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                         batch_size = batch_size,
                         num_workers = num_workers)
 
-    def average_weights(w):
-        """
-        Returns the average of the weights.
-        """
-        w_avg = copy.deepcopy(w[0])
-        for key in w_avg.keys():
-            for i in range(1, len(w)):
-                w_avg[key] += w[i][key]
-            w_avg[key] = torch.div(w_avg[key], len(w))
-        return w_avg
-
     # the number of samples whose label is y and sensitive attribute is z
     m_yz = {(0,0): ((train_dataset.y == 0) & (train_dataset.sen == 0)).sum(),
            (1,0): ((train_dataset.y == 1) & (train_dataset.sen == 0)).sum(),
@@ -308,6 +173,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                                         idxs=clients_idx[idx], batch_size = batch_size, 
                                        option = option, penalty = penalty, lbd = lbd, 
                                        seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
+
             w, loss = local_model.update_weights(
                             model=copy.deepcopy(model), global_round=round_, 
                                 learning_rate = learning_rate, local_epochs = local_epochs, 
@@ -316,7 +182,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
             local_losses.append(copy.deepcopy(loss))
 
         # update global weights
-        weights = average_weights(local_weights)
+        weights = average_weights(local_weights, clients_idx, idxs_users)
         model.load_state_dict(weights)
 
         loss_avg = sum(local_losses) / len(local_losses)
@@ -345,7 +211,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                 if option == "FairBatch": loss_yz[yz] += loss_yz_c[yz]
                 
             if prn: print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
-                c, acc_loss, fair_loss, metric, disparity(n_yz_c)))
+                c+1, acc_loss, fair_loss, metric, disparity(n_yz_c)))
             
         if option == "FairBatch": 
             # update the lambda according to the paper -> see Section A.1 of FairBatch
@@ -381,11 +247,77 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                         np.mean(np.array(train_loss)), 
                         100*train_accuracy[-1], metric, disparity(n_yz)))
 
+        if adaptive_alpha: alpha = DPDisparity(n_yz)
+    
+    if option == "threshold adjusting": 
+        models = [copy.deepcopy(model), copy.deepcopy(model)]
+        bias_grad, w = [0,0], [0,0]
+        clients_idx_sen = {0:[], 1:[]}
+
+        for c in range(num_clients):
+            for sen in [0,1]:
+                clients_idx_sen[sen].append(clients_idx[c][train_dataset.sen[clients_idx[c]] == sen])
+        
+        for round_ in tqdm(range(adjusting_rounds)):
+
+            rd = riskDifference(n_yz, False)
+            if abs(rd) <= epsilon: break
+            update_step = {0:1, 1:-1} if rd > 0 else {0:-1, 1:1}
+
+            local_weights = [[],[]]
+
+            for c in range(num_clients):
+                for sen in [0,1]:
+                    local_model = ClientUpdate(dataset=train_dataset,
+                                                idxs=clients_idx_sen[sen][c], batch_size = batch_size, 
+                                            option = option, penalty = penalty, lbd = lbd, 
+                                            seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
+                    w[sen], bias_grad[sen] = local_model.threshold_adjust(
+                                    model=copy.deepcopy(models[sen]), global_round=round_, 
+                                        learning_rate = learning_rate, local_epochs = adjusting_epochs, 
+                                        optimizer = optimizer)
+                
+                update_sen = 0 if bias_grad[0][1] < bias_grad[1][1] else 1
+                w[update_sen]['linear.bias'][1] += adjusting_alpha * update_step[update_sen]
+                w[update_sen]['linear.bias'][0] -= adjusting_alpha * update_step[update_sen]
+                local_weights[update_sen].append(copy.deepcopy(w[update_sen]))
+                local_weights[1-update_sen].append(copy.deepcopy(models[1-update_sen].state_dict()))
+            # update global weights
+            if len(local_weights[0]): models[0].load_state_dict(average_weights(local_weights[0], clients_idx_sen[0], range(num_clients)))
+            if len(local_weights[1]): models[1].load_state_dict(average_weights(local_weights[1], clients_idx_sen[1], range(num_clients)))
+
+            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+
+            for c in range(num_clients):
+                for sen in [0,1]:
+                    local_model = ClientUpdate(dataset=train_dataset,
+                                                idxs=clients_idx_sen[sen][c], batch_size = batch_size, 
+                                            option = option, penalty = penalty, lbd = lbd, 
+                                            seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
+                    acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = models[sen], 
+                                                                            option = option)
+
+                for yz in n_yz:
+                    n_yz[yz] += n_yz_c[yz]                
+
     # Test inference after completion of training
-    test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
+    if option == "threshold adjusting":
+        metric = "Risk Difference"
+        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        idx_0 = np.where(test_dataset.sen == 0)[0].tolist()
+        idx_1 = np.where(test_dataset.sen == 1)[0].tolist()
+        test_acc_0, n_yz_0  = test_inference(models[0], DatasetSplit(test_dataset, idx_0), batch_size, riskDifference, True)
+        test_acc_1, n_yz_1 = test_inference(models[1], DatasetSplit(test_dataset, idx_1), batch_size, riskDifference, True)
+        for yz in n_yz:
+            n_yz[yz] = n_yz_0[yz] + n_yz_1[yz]
+        test_acc = (test_acc_0 * len(idx_0) + test_acc_1 * len(idx_1)) / (len(idx_0) + len(idx_1))
+        rd = riskDifference(n_yz)
+    else:
+        test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
 
     if prn:
-        print(f' \n Results after {num_rounds+1} global rounds of training:')
+        print(f' \n Results after {num_rounds} global rounds of training:')
         print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
         print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
 
