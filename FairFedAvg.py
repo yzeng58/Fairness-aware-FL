@@ -55,7 +55,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
           num_workers = 4, print_every = 1, fraction_clients = 1,
          penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True,
-         adaptive_alpha = False):
+         adaptive_alpha = False, epsilon = 0.01):
     """
     Server execution.
 
@@ -102,6 +102,8 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     train_prn: boolean value. If true, print the batch loss in local epochs.
 
     adaptive_alpha: in FairBatch method, change the value of alpha as fairness bias become small.
+
+    epsilon: for threshold adjusting method, given demographic disparity and update the threshold for each sensitive group.
     """
 
     prn = not ret
@@ -221,7 +223,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                 if option == "FairBatch": loss_yz[yz] += loss_yz_c[yz]
                 
             if prn: print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
-                c, acc_loss, fair_loss, metric, disparity(n_yz_c)))
+                c+1, acc_loss, fair_loss, metric, disparity(n_yz_c)))
             
         if option == "FairBatch": 
             # update the lambda according to the paper -> see Section A.1 of FairBatch
@@ -258,15 +260,47 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                         100*train_accuracy[-1], metric, disparity(n_yz)))
 
         if adaptive_alpha: alpha = DPDisparity(n_yz)
+    
+    if option == "threshold adjusting": 
+        models = [copy.deepcopy(model), copy.deepcopy(model)]
+        bias_grad, w = [0,0], [0,0]
+        clients_idx_sen = {0:[], 1:[]}
+
+        for c in range(num_clients):
+            for sen in [0,1]:
+                clients_idx_sen[sen].append(clients_idx[c][train_dataset.sen[clients_idx[c]] == sen])
+        
+        for round_ in tqdm(range(num_rounds)):
+            #TODO: compute n_yz
+            rd = DPDisparity(n_yz)
+            if rd <= epsilon: break
+
+            local_weights = [[],[]]
+
+            for c in range(num_clients):
+                for t in range(local_epochs):
+                    for sen in [0,1]:
+                        local_model = ClientUpdate(dataset=train_dataset,
+                                                    idxs=clients_idx_sen[sen][c], batch_size = batch_size, 
+                                                option = option, penalty = penalty, lbd = lbd, 
+                                                seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
+                        w[sen], bias_grad[sen] = local_model.threshold_adjust(
+                                        model=copy.deepcopy(model[sen]), global_round=round_, 
+                                            learning_rate = learning_rate, local_epochs = 1, 
+                                            optimizer = optimizer)
+                
+                update_sen = 0 if bias_grad[0] < bias_grad[1] else 1
+                local_weights[update_sen].append(copy.deepcopy(w[update]))
+            # update global weights
+            models[0].load_state_dict(average_weights(local_weights[0], clients_idx_sen[0], range(num_clients))
+            models[1].load_state_dict(average_weights(local_weights[1], clients_idx_sen[1], range(num_clients))
+            #TODO: need a test_inference to check the accuracy for different models.
 
     # Test inference after completion of training
     test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
 
-    # if option == "threshold adjusting": 
-        
-
     if prn:
-        print(f' \n Results after {num_rounds+1} global rounds of training:')
+        print(f' \n Results after {num_rounds} global rounds of training:')
         print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
         print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
 

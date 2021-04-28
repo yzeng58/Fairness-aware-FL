@@ -71,6 +71,7 @@ class ClientUpdate(object):
             batch_loss = []
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
                 features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
                 # we need to set the gradients to zero before starting to do backpropragation 
                 # because PyTorch accumulates the gradients on subsequent backward passes. 
                 # This is convenient while training RNNs
@@ -78,10 +79,11 @@ class ClientUpdate(object):
                 probas, logits = model(features)
                 loss, _, _ = loss_func(self.option,
                     logits, labels, probas, sensitive, self.mean_sensitive, self.penalty)
-                    
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
                 if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
                     print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
                         global_round + 1, i, batch_idx * len(features),
@@ -92,6 +94,55 @@ class ClientUpdate(object):
 
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
+
+    def threshold_adjust(self, model, global_round, learning_rate, local_epochs, optimizer):
+        # Set mode to train model
+        model.train()
+        epoch_loss = []
+        bias_grad = 0
+
+        # Set optimizer for the local updates
+        if optimizer == 'sgd':
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
+                                        ) # momentum=0.5
+        elif optimizer == 'adam':
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                         weight_decay=1e-4)
+
+        for i in range(local_epochs):
+            # only update the bias
+            param = next(model.parameters())
+            param.requires_grad = False
+
+            batch_loss = []
+            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+                # we need to set the gradients to zero before starting to do backpropragation 
+                # because PyTorch accumulates the gradients on subsequent backward passes. 
+                # This is convenient while training RNNs
+                
+                probas, logits = model(features)
+                loss, _, _ = loss_func(self.option,
+                    logits, labels, probas, sensitive, self.mean_sensitive, self.penalty)
+                    
+                optimizer.zero_grad()
+                # compute the gradients
+                loss.backward()
+                # get the gradient of the bias
+                bias_grad += model.linear.bias.grad
+                # paarameter update
+                optimizer.step()
+                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
+                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
+                        global_round + 1, i, batch_idx * len(features),
+                        len(self.trainloader.dataset),
+                        100. * batch_idx / len(self.trainloader), loss.item()))
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+        # weight, loss
+        return model.state_dict(), bias_grad
 
     def inference(self, model, option):
         """ 

@@ -83,8 +83,11 @@ def loss_func(option, logits, targets, outputs, sensitive, mean_sensitive, larg 
     Loss function. 
     """
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
-    fair_loss = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[0])
+    fair_loss = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[0] - torch.mean(logits.T[0]))
     fair_loss = torch.mean(torch.mul(fair_loss, fair_loss)) # modified mean to sum
+    # print("distance to the boundary when z = 0: %.4f(%.4f), z = 1: %.4f(%.4f)" % (torch.mean(logits.T[0][sensitive == 0]).item(), 
+    # torch.std(logits.T[0][sensitive == 0]).item(),
+    # torch.mean(logits.T[0][sensitive == 1]).item(), torch.std(logits.T[0][sensitive == 1]).item()))
     if option == 'Zafar':
         return acc_loss + larg*fair_loss, acc_loss, larg*fair_loss
     elif option == 'FB_inference':
