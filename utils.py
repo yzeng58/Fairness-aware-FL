@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import pandas as pd
 from scipy.stats import multivariate_normal
-import torch, random
+import torch, random, copy
 
 class LoadData(Dataset):
     def __init__(self, df, pred_var, sen_var):
@@ -51,14 +51,17 @@ class logReg(torch.nn.Module):
         probas = torch.sigmoid(logits)
         return probas.type(torch.FloatTensor), logits
     
-def riskDifference(n_yz):
+def riskDifference(n_yz, absolute = True):
     """
     Given a dictionary of number of samples in different groups, compute the risk difference.
     |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
     """
     n_z1 = max(n_yz[(1,1)] + n_yz[(0,1)], 1)
     n_z0 = max(n_yz[(0,0)] + n_yz[(1,0)], 1)
-    return abs(n_yz[(1,1)]/n_z1 - n_yz[(1,0)]/n_z0)
+    if absolute:
+        return abs(n_yz[(1,1)]/n_z1 - n_yz[(1,0)]/n_z0)
+    else:
+        return n_yz[(1,1)]/n_z1 - n_yz[(1,0)]/n_z0
 
 def pRule(n_yz):
     """
@@ -77,6 +80,21 @@ def DPDisparity(n_yz):
     n_z0 = max(n_yz[(0,0)] + n_yz[(1,0)], 1)
     return max(abs(n_yz[(1,0)]/n_z0 - p_y1), 
         abs(n_yz[(1,1)]/n_z1 - p_y1))
+
+def average_weights(w, clients_idx, idx_users):
+    """
+    Returns the average of the weights.
+    """
+    w_avg = copy.deepcopy(w[0])
+    num_samples = 0
+    for i in range(1, len(w)):
+        num_samples += len(clients_idx[idx_users[i]])
+        for key in w_avg.keys():            
+            w_avg[key] += w[i][key] * len(clients_idx[idx_users[i]])
+        
+    for key in w_avg.keys(): 
+        w_avg[key] = torch.div(w_avg[key], num_samples)
+    return w_avg
 
 def loss_func(option, logits, targets, outputs, sensitive, mean_sensitive, larg = 1):
     """

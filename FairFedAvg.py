@@ -16,7 +16,7 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 #########################################################
 
 # TODO: need to update the criterion to loss_func
-def test_inference(model, test_dataset, batch_size, disparity):
+def test_inference(model, test_dataset, batch_size, disparity, ret_n_yz = False):
     """ 
     Returns the test accuracy and loss.
     """
@@ -49,13 +49,16 @@ def test_inference(model, test_dataset, batch_size, disparity):
 
     accuracy = correct/total
     # |P(Group1, pos) - P(Group2, pos)| = |N(Group1, pos)/N(Group1) - N(Group2, pos)/N(Group2)|
-    return accuracy, loss, disparity(n_yz)
+    if ret_n_yz:
+        return accuracy, n_yz
+    else:
+        return accuracy, loss, disparity(n_yz)
 
 def train(model, dataset_info, option = "unconstrained", batch_size = 128, 
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
           num_workers = 4, print_every = 1, fraction_clients = 1,
          penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True,
-         adaptive_alpha = False, epsilon = 0.01):
+         adaptive_alpha = False, epsilon = 0.01, adjusting_rounds = 10, adjusting_epochs = 20, adjusting_alpha = 0.05):
     """
     Server execution.
 
@@ -142,21 +145,6 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     train_loader = DataLoader(dataset = train_dataset,
                         batch_size = batch_size,
                         num_workers = num_workers)
-
-    def average_weights(w, clients_idx, idx_users):
-        """
-        Returns the average of the weights.
-        """
-        w_avg = copy.deepcopy(w[0])
-        num_samples = 0
-        for i in range(1, len(w)):
-            num_samples += len(clients_idx[idx_users[i]])
-            for key in w_avg.keys():            
-                w_avg[key] += w[i][key] * len(clients_idx[idx_users[i]])
-            
-        for key in w_avg.keys(): 
-            w_avg[key] = torch.div(w_avg[key], num_samples)
-        return w_avg
 
     # the number of samples whose label is y and sensitive attribute is z
     m_yz = {(0,0): ((train_dataset.y == 0) & (train_dataset.sen == 0)).sum(),
@@ -270,34 +258,63 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
             for sen in [0,1]:
                 clients_idx_sen[sen].append(clients_idx[c][train_dataset.sen[clients_idx[c]] == sen])
         
-        for round_ in tqdm(range(num_rounds)):
-            #TODO: compute n_yz
-            rd = DPDisparity(n_yz)
-            if rd <= epsilon: break
+        for round_ in tqdm(range(adjusting_rounds)):
+
+            rd = riskDifference(n_yz, False)
+            if abs(rd) <= epsilon: break
+            update_step = {0:1, 1:-1} if rd > 0 else {0:-1, 1:1}
 
             local_weights = [[],[]]
 
             for c in range(num_clients):
-                for t in range(local_epochs):
-                    for sen in [0,1]:
-                        local_model = ClientUpdate(dataset=train_dataset,
-                                                    idxs=clients_idx_sen[sen][c], batch_size = batch_size, 
-                                                option = option, penalty = penalty, lbd = lbd, 
-                                                seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
-                        w[sen], bias_grad[sen] = local_model.threshold_adjust(
-                                        model=copy.deepcopy(model[sen]), global_round=round_, 
-                                            learning_rate = learning_rate, local_epochs = 1, 
-                                            optimizer = optimizer)
+                for sen in [0,1]:
+                    local_model = ClientUpdate(dataset=train_dataset,
+                                                idxs=clients_idx_sen[sen][c], batch_size = batch_size, 
+                                            option = option, penalty = penalty, lbd = lbd, 
+                                            seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
+                    w[sen], bias_grad[sen] = local_model.threshold_adjust(
+                                    model=copy.deepcopy(models[sen]), global_round=round_, 
+                                        learning_rate = learning_rate, local_epochs = adjusting_epochs, 
+                                        optimizer = optimizer)
                 
-                update_sen = 0 if bias_grad[0] < bias_grad[1] else 1
-                local_weights[update_sen].append(copy.deepcopy(w[update]))
+                update_sen = 0 if bias_grad[0][1] < bias_grad[1][1] else 1
+                w[update_sen]['linear.bias'][1] += adjusting_alpha * update_step[update_sen]
+                w[update_sen]['linear.bias'][0] -= adjusting_alpha * update_step[update_sen]
+                local_weights[update_sen].append(copy.deepcopy(w[update_sen]))
+                local_weights[1-update_sen].append(copy.deepcopy(models[1-update_sen].state_dict()))
             # update global weights
-            models[0].load_state_dict(average_weights(local_weights[0], clients_idx_sen[0], range(num_clients))
-            models[1].load_state_dict(average_weights(local_weights[1], clients_idx_sen[1], range(num_clients))
-            #TODO: need a test_inference to check the accuracy for different models.
+            if len(local_weights[0]): models[0].load_state_dict(average_weights(local_weights[0], clients_idx_sen[0], range(num_clients)))
+            if len(local_weights[1]): models[1].load_state_dict(average_weights(local_weights[1], clients_idx_sen[1], range(num_clients)))
+
+            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+
+            for c in range(num_clients):
+                for sen in [0,1]:
+                    local_model = ClientUpdate(dataset=train_dataset,
+                                                idxs=clients_idx_sen[sen][c], batch_size = batch_size, 
+                                            option = option, penalty = penalty, lbd = lbd, 
+                                            seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
+                    acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = models[sen], 
+                                                                            option = option)
+
+                for yz in n_yz:
+                    n_yz[yz] += n_yz_c[yz]                
 
     # Test inference after completion of training
-    test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
+    if option == "threshold adjusting":
+        metric = "Risk Difference"
+        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        idx_0 = np.where(test_dataset.sen == 0)[0].tolist()
+        idx_1 = np.where(test_dataset.sen == 1)[0].tolist()
+        test_acc_0, n_yz_0  = test_inference(models[0], DatasetSplit(test_dataset, idx_0), batch_size, riskDifference, True)
+        test_acc_1, n_yz_1 = test_inference(models[1], DatasetSplit(test_dataset, idx_1), batch_size, riskDifference, True)
+        for yz in n_yz:
+            n_yz[yz] = n_yz_0[yz] + n_yz_1[yz]
+        test_acc = (test_acc_0 * len(idx_0) + test_acc_1 * len(idx_1)) / (len(idx_0) + len(idx_1))
+        rd = riskDifference(n_yz)
+    else:
+        test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
 
     if prn:
         print(f' \n Results after {num_rounds} global rounds of training:')
