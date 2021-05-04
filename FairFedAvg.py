@@ -58,7 +58,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
           num_rounds = 5, learning_rate = 0.01, optimizer = 'adam', local_epochs= 5, metric = "Risk Difference",
           num_workers = 4, print_every = 1, fraction_clients = 1,
          penalty = 1, alpha = 0.005, seed = 123, mean_sensitive = None, ret = False, train_prn = True,
-         adaptive_alpha = False, epsilon = 0.01, adjusting_rounds = 10, adjusting_epochs = 20, adjusting_alpha = 0.05):
+         adaptive_alpha = False, epsilon = 0.02, adjusting_rounds = 10, adjusting_epochs = 20, adjusting_alpha = 0.05):
     """
     Server execution.
 
@@ -261,7 +261,8 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
         for round_ in tqdm(range(adjusting_rounds)):
 
             rd = riskDifference(n_yz, False)
-            if abs(rd) <= epsilon: break
+            # adjusting_alpha = abs(rd)
+            if disparity(n_yz) <= epsilon: break
             update_step = {0:1, 1:-1} if rd > 0 else {0:-1, 1:1}
 
             local_weights = [[],[]]
@@ -289,6 +290,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
             n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
             loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
 
+            train_loss, train_acc = [], []
             for c in range(num_clients):
                 for sen in [0,1]:
                     local_model = ClientUpdate(dataset=train_dataset,
@@ -297,24 +299,35 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
                                             seed = seed, mean_sensitive = mean_sensitive, prn = train_prn)
                     acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = models[sen], 
                                                                             option = option)
+                    train_loss.append(loss)
+                    train_acc.append(acc)
 
-                for yz in n_yz:
-                    n_yz[yz] += n_yz_c[yz]                
+                    for yz in n_yz:
+                        n_yz[yz] += n_yz_c[yz]            
+
+            if prn:
+                if (round_+1) % print_every == 0:
+                    print(f' \nAvg Training Stats after {round_+1} threshold adjusting global rounds:')
+                    print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation %s: %.4f" % (
+                        np.mean(np.array(train_loss)), 
+                        100*np.array(train_acc).mean(), metric, disparity(n_yz)))
+  
 
     # Test inference after completion of training
     if option == "threshold adjusting":
-        metric = "Risk Difference"
         n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
         idx_0 = np.where(test_dataset.sen == 0)[0].tolist()
         idx_1 = np.where(test_dataset.sen == 1)[0].tolist()
         test_acc_0, n_yz_0  = test_inference(models[0], DatasetSplit(test_dataset, idx_0), batch_size, riskDifference, True)
         test_acc_1, n_yz_1 = test_inference(models[1], DatasetSplit(test_dataset, idx_1), batch_size, riskDifference, True)
+        
         for yz in n_yz:
             n_yz[yz] = n_yz_0[yz] + n_yz_1[yz]
+
         test_acc = (test_acc_0 * len(idx_0) + test_acc_1 * len(idx_1)) / (len(idx_0) + len(idx_1))
-        rd = riskDifference(n_yz)
+        rd = disparity(n_yz)
     else:
-        test_acc, test_loss, rd= test_inference(model, test_dataset, batch_size, disparity)
+        test_acc, _, rd= test_inference(model, test_dataset, batch_size, disparity)
 
     if prn:
         print(f' \n Results after {num_rounds} global rounds of training:')
