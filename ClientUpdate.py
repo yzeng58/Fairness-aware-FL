@@ -163,6 +163,7 @@ class ClientUpdate(object):
             outputs, logits = model(features)
 
             # Prediction
+            
             _, pred_labels = torch.max(outputs, 1)
             pred_labels = pred_labels.view(-1)
             bool_correct = torch.eq(pred_labels, labels)

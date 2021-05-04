@@ -78,6 +78,7 @@ def DPDisparity(n_yz):
     p_y1 = (n_yz[(1,0)] + n_yz[(1,1)])/(n_yz[(1,0)] + n_yz[(1,1)] + n_yz[(0,0)] + n_yz[(0,1)]) # P(y == 1)
     n_z1 = max(n_yz[(1,1)] + n_yz[(0,1)], 1)
     n_z0 = max(n_yz[(0,0)] + n_yz[(1,0)], 1)
+
     return max(abs(n_yz[(1,0)]/n_z0 - p_y1), 
         abs(n_yz[(1,1)]/n_z1 - p_y1))
 
@@ -101,11 +102,12 @@ def loss_func(option, logits, targets, outputs, sensitive, mean_sensitive, larg 
     Loss function. 
     """
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
-    fair_loss = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[0] - torch.mean(logits.T[0]))
-    fair_loss = torch.mean(torch.mul(fair_loss, fair_loss)) # modified mean to sum
-    # print("distance to the boundary when z = 0: %.4f(%.4f), z = 1: %.4f(%.4f)" % (torch.mean(logits.T[0][sensitive == 0]).item(), 
-    # torch.std(logits.T[0][sensitive == 0]).item(),
-    # torch.mean(logits.T[0][sensitive == 1]).item(), torch.std(logits.T[0][sensitive == 1]).item()))
+    fair_loss0 = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[0] - torch.mean(logits.T[0]))
+    fair_loss0 = torch.mean(torch.mul(fair_loss0, fair_loss0)) # modified mean to sum
+    fair_loss1 = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[1] - torch.mean(logits.T[1]))
+    fair_loss1 = torch.mean(torch.mul(fair_loss1, fair_loss1)) # modified mean to sum
+    fair_loss = fair_loss0 + fair_loss1
+
     if option == 'Zafar':
         return acc_loss + larg*fair_loss, acc_loss, larg*fair_loss
     elif option == 'FB_inference':
