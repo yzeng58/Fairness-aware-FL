@@ -4,7 +4,8 @@ from FairFedAvg import *
 import time
 
 def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 5, 
-          local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch"):
+          local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch",
+          optimizer = 'sgd', penalty = 500):
     """
     Run simulations.
     """
@@ -22,9 +23,9 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         
         # train the model with the synthetic dataset
         test_acc_i, rd_i = train(logReg(num_features=3, num_classes=2), synthetic_info,
-          option = option, optimizer = 'sgd', learning_rate = learning_rate, metric = metric,
+          option = option, optimizer = optimizer, learning_rate = learning_rate, metric = metric,
           num_rounds = num_rounds, local_epochs = local_epochs, alpha = alpha, ret = True, seed = seed,
-          train_prn = False, adaptive_alpha = adaptive_alpha)
+          train_prn = False, adaptive_alpha = adaptive_alpha, penalty = penalty)
         
         test_acc.append(test_acc_i)
         rd.append(rd_i)
