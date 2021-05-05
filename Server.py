@@ -263,11 +263,6 @@ class Server(object):
         random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        # set seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
         # Training
         train_loss, train_accuracy = [], []
         start_time = time.time()
