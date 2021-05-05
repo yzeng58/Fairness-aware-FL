@@ -135,7 +135,7 @@ class ClientUpdate(object):
         # weight, loss
         return model.state_dict(), bias_grad
 
-    def inference(self, model, option):
+    def standard_inference(self, model, option):
         """ 
         Returns the inference accuracy, 
                                 loss, 
@@ -194,3 +194,6 @@ class ClientUpdate(object):
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, loss_yz
         else:
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, None
+
+    def FairBatch_inference(self):
+        pas

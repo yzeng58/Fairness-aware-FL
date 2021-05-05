@@ -29,11 +29,11 @@ def test_inference(model, test_dataset, batch_size, disparity, ret_n_yz = False)
     testloader = DataLoader(test_dataset, batch_size=batch_size,
                             shuffle=False)
 
-    for batch_idx, (features, labels, sensitive) in enumerate(testloader):
+    for _, (features, labels, sensitive) in enumerate(testloader):
         features = features.to(DEVICE)
         labels =  labels.to(DEVICE).type(torch.LongTensor)
         # Inference
-        outputs, logits = model(features)
+        outputs, _ = model(features)
         batch_loss = criterion(outputs, labels)
         loss += batch_loss.item()
 
@@ -72,7 +72,7 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
         - clients_idx: a list of lists, with each sublist contains the indexs of the training samples in one client.
                 the length of the list is the number of clients.
 
-    option: "unconstrained", "Zafar", "FairBatch".
+    option: "unconstrained", "Zafar", "FairBatch", "threshold adjusting", "bias correcting".
 
     batch_size: a positive integer.
 
@@ -132,19 +132,8 @@ def train(model, dataset_info, option = "unconstrained", batch_size = 128,
     
     # Training
     train_loss, train_accuracy = [], []
-    val_acc_list, net_list = [], []
-    cv_loss, cv_acc = [], []
-    val_loss_pre, counter = 0, 0
     start_time = time.time()
     weights = model.state_dict()
-    
-    test_loader = DataLoader(dataset = test_dataset,
-                            batch_size = batch_size,
-                            num_workers = num_workers)
-    
-    train_loader = DataLoader(dataset = train_dataset,
-                        batch_size = batch_size,
-                        num_workers = num_workers)
 
     # the number of samples whose label is y and sensitive attribute is z
     m_yz = {(0,0): ((train_dataset.y == 0) & (train_dataset.sen == 0)).sum(),
