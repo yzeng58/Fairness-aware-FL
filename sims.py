@@ -1,10 +1,12 @@
 # import the training method 
-from FairFedAvg import *
+from Server import *
 
 import time
 
 def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 5, 
-          local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch"):
+          local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch",
+          optimizer = 'sgd', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
+          adjusting_alpha = 0.7, epsilon = 0.02):
     """
     Run simulations.
     """
@@ -20,12 +22,25 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         # generate the synthetic dataset
         synthetic_info = dataGenerate(seed = seed, train_samples = train_samples, test_samples = test_samples)
         
+        server = Server(logReg(num_features=3, num_classes=2), synthetic_info, seed = seed, ret = True, train_prn = False, metric = metric)
+        if option == 'unconstrained':
+            test_acc_i, rd_i = server.Unconstrained(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer)
+
+        elif option == 'Zafar':
+            test_acc_i, rd_i = server.Zafar(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, penalty = penalty, epsilon = epsilon)
+
+        elif option == 'threshold adjusting':
+            test_acc_i, rd_i = server.ThresholdAdjust(num_rounds = adjusting_rounds, local_epochs = adjusting_epochs, learning_rate = adjusting_alpha, 
+                 epsilon = epsilon)
+
+        elif option == 'FairBatch':
+            test_acc_i, rd_i = server.FairBatch(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, adaptive_alpha = adaptive_alpha, alpha = alpha)
+
         # train the model with the synthetic dataset
-        test_acc_i, rd_i = train(logReg(num_features=3, num_classes=2), synthetic_info,
-          option = option, optimizer = 'sgd', learning_rate = learning_rate, metric = metric,
-          num_rounds = num_rounds, local_epochs = local_epochs, alpha = alpha, ret = True, seed = seed,
-          train_prn = False, adaptive_alpha = adaptive_alpha)
-        
+
         test_acc.append(test_acc_i)
         rd.append(rd_i)
         
