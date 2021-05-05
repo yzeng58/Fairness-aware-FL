@@ -18,30 +18,30 @@ import os
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 #########################################################
 
-class ClientUpdate(object):
-    def __init__(self, dataset, idxs, batch_size, option, penalty = 0, lbd = None, seed = 0, mean_sensitive = None, prn = True):
-        self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, option, lbd, seed)
+class Client(object):
+    def __init__(self, dataset, idxs, batch_size, option, seed = 0, prn = True, lbd = None, penalty = 0):
+        self.seed = seed 
         self.dataset = dataset
         self.option = option
-        self.penalty = penalty
-        self.mean_sensitive = mean_sensitive
         self.prn = prn
-            
-    def train_val(self, dataset, idxs, batch_size, option, lbd, seed):
+        self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, lbd)
+        self.penalty = penalty
+
+    def train_val(self, dataset, idxs, batch_size, lbd):
         """
         Returns train, validation for a given local training dataset
         and user indexes.
         """
-        torch.manual_seed(seed)
+        torch.manual_seed(self.seed)
         
         # split indexes for train, validation (90, 10)
         idxs_train = idxs[:int(0.9*len(idxs))]
         idxs_val = idxs[int(0.9*len(idxs)):len(idxs)]
         
-        if option == "FairBatch": 
+        if self.option == "FairBatch": 
             # FairBatch(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0)
             sampler = FairBatch(DatasetSplit(dataset, idxs_train), lbd, idxs,
-                                 batch_size = batch_size, replacement = False, seed = seed)
+                                 batch_size = batch_size, replacement = False, seed = self.seed)
             trainloader = DataLoader(DatasetSplit(dataset, idxs_train), sampler = sampler,
                                      batch_size=batch_size, num_workers = 0)
                         
@@ -53,11 +53,15 @@ class ClientUpdate(object):
                                      batch_size=int(len(idxs_val)/10), shuffle=False)
         return trainloader, validloader
 
-    def update_weights(self, model, global_round, learning_rate, local_epochs, optimizer):
-    
+    def standard_update(self, model, global_round, learning_rate, local_epochs, optimizer): 
         # Set mode to train model
         model.train()
         epoch_loss = []
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
 
         # Set optimizer for the local updates
         if optimizer == 'sgd':
@@ -65,8 +69,7 @@ class ClientUpdate(object):
                                         ) # momentum=0.5
         elif optimizer == 'adam':
             optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                         weight_decay=1e-4)
-
+                                        weight_decay=1e-4)
         for i in range(local_epochs):
             batch_loss = []
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
@@ -77,8 +80,7 @@ class ClientUpdate(object):
                 # This is convenient while training RNNs
                 
                 probas, logits = model(features)
-                loss, _, _ = loss_func(self.option,
-                    logits, labels, probas, sensitive, self.mean_sensitive, self.penalty)
+                loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive, self.penalty)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -95,10 +97,14 @@ class ClientUpdate(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
-    def threshold_adjust(self, model, global_round, learning_rate, local_epochs, optimizer):
+    def threshold_adjusting(self, model, global_round, learning_rate, local_epochs, optimizer): 
         # Set mode to train model
         model.train()
-        bias_grad = 0
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
 
         # Set optimizer for the local updates
         if optimizer == 'sgd':
@@ -106,8 +112,8 @@ class ClientUpdate(object):
                                         ) # momentum=0.5
         elif optimizer == 'adam':
             optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                         weight_decay=1e-4)
-
+                                        weight_decay=1e-4)
+        bias_grad = 0
         for _ in range(local_epochs):
             # only update the bias
             param = next(model.parameters())
@@ -121,8 +127,7 @@ class ClientUpdate(object):
                 # This is convenient while training RNNs
                 
                 probas, logits = model(features)
-                loss, _, _ = loss_func(self.option,
-                    logits, labels, probas, sensitive, self.mean_sensitive, self.penalty)
+                loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive)
                     
                 optimizer.zero_grad()
                 # compute the gradients
@@ -131,11 +136,10 @@ class ClientUpdate(object):
                 bias_grad += model.linear.bias.grad
                 # paarameter update
                 optimizer.step()
-
         # weight, loss
         return model.state_dict(), bias_grad
 
-    def standard_inference(self, model, option):
+    def inference(self, model):
         """ 
         Returns the inference accuracy, 
                                 loss, 
@@ -181,19 +185,16 @@ class ClientUpdate(object):
                     loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
                                          outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
-                                         self.mean_sensitive, self.penalty)
+                                         self.penalty)
                     loss_yz[yz] += loss_yz_
             
             batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, logits, 
-                                                        labels, outputs, sensitive, self.mean_sensitive, self.penalty)
+                                                        labels, outputs, sensitive, self.penalty)
             loss, acc_loss, fair_loss = (loss + batch_loss.item(), 
                                          acc_loss + batch_acc_loss.item(), 
                                          fair_loss + batch_fair_loss.item())
         accuracy = correct/total
-        if option == "FairBatch":
+        if self.option == "FairBatch":
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, loss_yz
         else:
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, None
-
-    def FairBatch_inference(self):
-        pas

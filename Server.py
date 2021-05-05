@@ -7,7 +7,7 @@ from tqdm import tqdm
 from torch import nn
 from torch.utils.data import DataLoader
 
-from ClientUpdate import *
+from Client import *
 from utils import *
 from fairBatch import *
 
@@ -97,10 +97,10 @@ class Server(object):
             idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
 
             for idx in idxs_users:
-                local_model = ClientUpdate(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
+                local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
                             batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn)
 
-                w, loss = local_model.update_weights(
+                w, loss = local_model.standard_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
                                     learning_rate = learning_rate, local_epochs = local_epochs, 
                                     optimizer = optimizer)
@@ -115,18 +115,16 @@ class Server(object):
             train_loss.append(loss_avg)
 
             # Calculate avg training accuracy over all clients at every round
-            list_acc, list_loss = [], []
+            list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
             n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
             self.model.eval()
             for c in range(m):
-                local_model = ClientUpdate(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
+                local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
                             batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn)
                 # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model, 
-                                                                                        option = "unconstrained") 
+                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                 list_acc.append(acc)
-                list_loss.append(loss)
                 
                 for yz in n_yz:
                     n_yz[yz] += n_yz_c[yz]
@@ -191,11 +189,11 @@ class Server(object):
 
             for c in range(self.num_clients):
                 for sen in [0,1]:
-                    local_model = ClientUpdate(dataset=self.train_dataset,
+                    local_model = Client(dataset=self.train_dataset,
                                                 idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
                                             option = "threshold adjusting",  
                                             seed = self.seed, prn = self.train_prn)
-                    w[sen], bias_grad[sen] = local_model.threshold_adjust(
+                    w[sen], bias_grad[sen] = local_model.threshold_adjusting(
                                     model=copy.deepcopy(models[sen]), global_round=round_, 
                                         learning_rate = 0.005, local_epochs = local_epochs, 
                                         optimizer = 'adam')
@@ -214,12 +212,11 @@ class Server(object):
             train_loss, train_acc = [], []
             for c in range(self.num_clients):
                 for sen in [0,1]:
-                    local_model = ClientUpdate(dataset=self.train_dataset,
+                    local_model = Client(dataset=self.train_dataset,
                                                 idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
                                             option = "threshold adjusting",  
                                             seed = self.seed, prn = self.train_prn)
-                    acc, loss, n_yz_c, _, _, _ = local_model.inference(model = models[sen], 
-                                                                            option = "threshold adjusting")
+                    acc, loss, n_yz_c, _, _, _ = local_model.inference(model = models[sen])
                     train_loss.append(loss)
                     train_acc.append(acc)
 
@@ -285,10 +282,10 @@ class Server(object):
             idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
 
             for idx in idxs_users:
-                local_model = ClientUpdate(dataset=self.train_dataset, idxs=self.clients_idx[idx], penalty = penalty,
-                            batch_size = self.batch_size, option = "Zafar", seed = self.seed, prn = self.train_prn)
+                local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
+                            batch_size = self.batch_size, option = "Zafar", seed = self.seed, prn = self.train_prn, penalty = penalty)
 
-                w, loss = local_model.update_weights(
+                w, loss = local_model.standard_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
                                     learning_rate = learning_rate, local_epochs = local_epochs, 
                                     optimizer = optimizer)
@@ -303,18 +300,16 @@ class Server(object):
             train_loss.append(loss_avg)
 
             # Calculate avg training accuracy over all clients at every round
-            list_acc, list_loss = [], []
+            list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
             n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
             self.model.eval()
             for c in range(m):
-                local_model = ClientUpdate(dataset=self.train_dataset, idxs=self.clients_idx[idx], penalty = penalty,
-                            batch_size = self.batch_size, option = "Zafar", seed = self.seed, prn = self.train_prn)
+                local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx],
+                            batch_size = self.batch_size, option = "Zafar", seed = self.seed, prn = self.train_prn, penalty = penalty)
                 # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model, 
-                                                                                        option = "Zafar") 
+                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                 list_acc.append(acc)
-                list_loss.append(loss)
                 
                 for yz in n_yz:
                     n_yz[yz] += n_yz_c[yz]
@@ -385,12 +380,12 @@ class Server(object):
             idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
 
             for idx in idxs_users:
-                local_model = ClientUpdate(dataset=self.train_dataset,
+                local_model = Client(dataset=self.train_dataset,
                                             idxs=self.clients_idx[idx], batch_size = self.batch_size, 
                                         option = "FairBatch", lbd = lbd, 
                                         seed = self.seed, prn = self.train_prn)
 
-                w, loss = local_model.update_weights(
+                w, loss = local_model.standard_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
                                     learning_rate = learning_rate, local_epochs = local_epochs, 
                                     optimizer = optimizer)
@@ -405,20 +400,18 @@ class Server(object):
             train_loss.append(loss_avg)
 
             # Calculate avg training accuracy over all clients at every round
-            list_acc, list_loss = [], []
+            list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
             n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
             loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
             self.model.eval()
             for c in range(m):
-                local_model = ClientUpdate(dataset=self.train_dataset,
+                local_model = Client(dataset=self.train_dataset,
                                             idxs=self.clients_idx[c], batch_size = self.batch_size, option = "FairBatch", 
                                             lbd = lbd, seed = self.seed, prn = self.train_prn)
                 # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model, 
-                                                                                        option = "FairBatch") 
+                acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model) 
                 list_acc.append(acc)
-                list_loss.append(loss)
                 
                 for yz in n_yz:
                     n_yz[yz] += n_yz_c[yz]
@@ -493,10 +486,9 @@ class Server(object):
         if test_dataset == None: test_dataset = self.test_dataset
 
         model.eval()
-        loss, total, correct = 0.0, 0.0, 0.0
+        total, correct = 0.0, 0.0
         n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
         
-        criterion = nn.NLLLoss().to(DEVICE)
         testloader = DataLoader(test_dataset, batch_size=self.batch_size,
                                 shuffle=False)
 
@@ -505,8 +497,6 @@ class Server(object):
             labels =  labels.to(DEVICE).type(torch.LongTensor)
             # Inference
             outputs, _ = model(features)
-            batch_loss = criterion(outputs, labels)
-            loss += batch_loss.item()
 
             # Prediction
             _, pred_labels = torch.max(outputs, 1)

@@ -97,7 +97,7 @@ def average_weights(w, clients_idx, idx_users):
         w_avg[key] = torch.div(w_avg[key], num_samples)
     return w_avg
 
-def loss_func(option, logits, targets, outputs, sensitive, mean_sensitive, larg = 1):
+def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
     """
     Loss function. 
     """
