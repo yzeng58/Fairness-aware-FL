@@ -119,6 +119,12 @@ def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
     else:
         return acc_loss, acc_loss, larg*fair_loss
 
+def weighted_loss(logits, targets, weights):
+    acc_loss = F.cross_entropy(logits, targets, reduction = 'none')
+    weights_sum = weights.sum().item()
+    acc_loss = torch.sum(acc_loss * weights / weights_sum)
+    return acc_loss
+    
 def al_loss(logits, targets, adv_logits, adv_targets):
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
     adv_loss = F.cross_entropy(adv_logits, adv_targets)
