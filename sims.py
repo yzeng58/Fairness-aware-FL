@@ -22,7 +22,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         # generate the synthetic dataset
         synthetic_info = dataGenerate(seed = seed, train_samples = train_samples, test_samples = test_samples)
         
-        server = Server(logReg(num_features=3, num_classes=2), synthetic_info, seed = seed, ret = True, train_prn = False, metric = metric)
+        server = Server(logReg(num_features=3, num_classes=2, seed=seed), synthetic_info, seed = seed, ret = True, train_prn = False, metric = metric)
         if option == 'unconstrained':
             test_acc_i, rd_i = server.Unconstrained(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer)
@@ -32,12 +32,18 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
                 optimizer = optimizer, penalty = penalty, epsilon = epsilon)
 
         elif option == 'threshold adjusting':
+            server.Unconstrained(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer)
             test_acc_i, rd_i = server.ThresholdAdjust(num_rounds = adjusting_rounds, local_epochs = adjusting_epochs, learning_rate = adjusting_alpha, 
                  epsilon = epsilon)
 
         elif option == 'FairBatch':
             test_acc_i, rd_i = server.FairBatch(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, adaptive_alpha = adaptive_alpha, alpha = alpha)
+
+        elif option == 'adversarial learning':
+            test_acc_i, rd_i = server.AdversarialLearning(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, epsilon = epsilon, alpha = alpha)
 
         # train the model with the synthetic dataset
 

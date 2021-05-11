@@ -41,7 +41,9 @@ class logReg(torch.nn.Module):
     """
     Logistic regression model.
     """
-    def __init__(self, num_features, num_classes):
+    def __init__(self, num_features, num_classes, seed = 123):
+        torch.manual_seed(seed)
+
         super().__init__()
         self.num_classes = num_classes
         self.linear = torch.nn.Linear(num_features, num_classes)
@@ -117,6 +119,10 @@ def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
     else:
         return acc_loss, acc_loss, larg*fair_loss
 
+def al_loss(logits, targets, adv_logits, adv_targets):
+    acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
+    adv_loss = F.cross_entropy(adv_logits, adv_targets)
+    return acc_loss, adv_loss
 
 ## Synthetic data generation ##
 ########################
