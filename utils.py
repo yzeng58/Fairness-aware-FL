@@ -99,15 +99,25 @@ def average_weights(w, clients_idx, idx_users):
         w_avg[key] = torch.div(w_avg[key], num_samples)
     return w_avg
 
+def weighted_average_weights(w, nc, n):
+    w_avg = copy.deepcopy(w[0])
+    for i in range(1, len(w)):
+        for key in w_avg.keys():            
+            w_avg[key] += w[i][key] * nc[i]
+        
+    for key in w_avg.keys(): 
+        w_avg[key] = torch.div(w_avg[key], n)
+    return w_avg
+
 def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
     """
     Loss function. 
     """
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
     fair_loss0 = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[0] - torch.mean(logits.T[0]))
-    fair_loss0 = torch.mean(torch.mul(fair_loss0, fair_loss0)) # modified mean to sum
+    fair_loss0 = torch.mean(torch.mul(fair_loss0, fair_loss0)) 
     fair_loss1 = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[1] - torch.mean(logits.T[1]))
-    fair_loss1 = torch.mean(torch.mul(fair_loss1, fair_loss1)) # modified mean to sum
+    fair_loss1 = torch.mean(torch.mul(fair_loss1, fair_loss1)) 
     fair_loss = fair_loss0 + fair_loss1
 
     if option == 'Zafar':

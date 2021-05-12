@@ -151,7 +151,7 @@ class Client(object):
         # Set optimizer for the local updates
         if optimizer == 'sgd':
             optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
-                                        ) # momentum=0.5
+                                        momentum=0.5) # 
         elif optimizer == 'adam':
             optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
                                         weight_decay=1e-4)
@@ -170,7 +170,7 @@ class Client(object):
                 # labels_i == 0
                 y0_idx = torch.where(labels == 0)[0]
                 exp = np.exp(mu[sensitive[y0_idx]])
-                v[y0_idx] = exp / (1 + exp)
+                v[y0_idx] = 1 / (1 + exp)
 
                 _, logits = model(features)
                 loss = weighted_loss(logits, labels, v)
@@ -204,18 +204,9 @@ class Client(object):
         probas, _ = model(x)
         probas = probas.T[1] / torch.sum(probas, dim = 1)
 
-        v = torch.randn(len(y)).type(torch.DoubleTensor)
-        # y_i == 1
-        y1_idx = torch.where(y == 1)[0]
-        exp = np.exp(mu[z[y1_idx]])
-        v[y1_idx] = exp / (1 + exp)
+        v = torch.ones(len(y)).type(torch.DoubleTensor)
 
-        # y_i == 0
-        y0_idx = torch.where(y == 0)[0]
-        exp = np.exp(mu[z[y0_idx]])
-        v[y0_idx] = exp / (1 + exp)
-
-        n, nz, yz = v.sum().item(), torch.tensor([0,0]), torch.tensor([0,0])
+        n, nz, yz, yhat = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), (probas * v).sum().item()
         # z_i = 0
         z0_idx = torch.where(z == 0)[0]
         yz[0] = (probas[z0_idx] * v[z0_idx]).sum().item()
@@ -226,7 +217,7 @@ class Client(object):
         yz[1] = (probas[z1_idx] * v[z1_idx]).sum().item()
         nz[1] = v[z1_idx].sum().item()
 
-        return n, nz, yz
+        return n, nz, yz, yhat
 
     def al_update(self, model, adv_model, global_round, learning_rate, local_epochs, optimizer, alpha): 
         # Set mode to train model
@@ -251,6 +242,9 @@ class Client(object):
             optimizer2 = torch.optim.Adam(model.parameters(), lr=learning_rate * alpha, weight_decay=1e-4)
 
         for i in range(local_epochs):
+            learning_rate = learning_rate * (1. / (1. + 1e-4 * (global_round*local_epochs + i)))
+            alpha = alpha * (1. / (1. + 1e-4 * (global_round*local_epochs + i)))
+
             batch_loss = []
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
                 features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
@@ -270,7 +264,6 @@ class Client(object):
                 optimizer1.zero_grad()
                 loss.backward(retain_graph = True)
                 g1 = torch.cat((model.linear.weight.grad.T, model.linear.bias.grad.reshape(1,2)), dim = 0).T
-                # print(model.state_dict())
 
                 # classification model
                 # w = w - lr * (-alpha * partial adversary_loss / partial w)
@@ -283,8 +276,8 @@ class Client(object):
                 adv_loss.backward()
 
                 # update
-                optimizer1.step()
-                optimizer2.step()
+                # optimizer1.step()
+                # optimizer2.step()
                 adv_optimizer.step()
 
                 # classification model
@@ -292,10 +285,10 @@ class Client(object):
                 w = model.state_dict()
                 proj = torch.mul(g1[0], g2[0]) / torch.sqrt(torch.mul(g2[0], g2[0]))
 
-                w['linear.weight'][0] = w['linear.weight'][0] + alpha * learning_rate * proj[:-1]
-                w['linear.weight'][1] = w['linear.weight'][1] - alpha * learning_rate * proj[:-1]
-                w['linear.bias'][0] = w['linear.bias'][0] + alpha * learning_rate * proj[-1]
-                w['linear.bias'][1] = w['linear.bias'][0] - alpha * learning_rate * proj[-1]
+                w['linear.weight'][0] = w['linear.weight'][0] + learning_rate * proj[:-1] - learning_rate * g1[0][:-1] + alpha * learning_rate * g2[0][:-1]
+                w['linear.weight'][1] = w['linear.weight'][1] - learning_rate * proj[:-1] - learning_rate * g1[1][:-1] + alpha * learning_rate * g2[1][:-1]
+                w['linear.bias'][0] = w['linear.bias'][0] + learning_rate * proj[-1] - learning_rate * g1[0][-1] + alpha * learning_rate * g2[0][-1]
+                w['linear.bias'][1] = w['linear.bias'][0] - learning_rate * proj[-1] - learning_rate * g1[1][-1] + alpha * learning_rate * g2[1][-1]
 
                 # update
                 model.load_state_dict(w)

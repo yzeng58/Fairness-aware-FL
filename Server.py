@@ -144,7 +144,7 @@ class Server(object):
                         100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
 
             if epsilon: 
-                if self.disparity(n_yz) < epsilon: break
+                if self.disparity(n_yz) < epsilon and train_accuracy[-1] > 0.5: break
 
         # Test inference after completion of training
         test_acc, n_yz= self.test_inference()
@@ -323,7 +323,7 @@ class Server(object):
                         100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
             
             if epsilon: 
-                if self.disparity(n_yz) < epsilon: break
+                if self.disparity(n_yz) < epsilon and train_accuracy[-1] > 0.5: break
 
         # Test inference after completion of training
         test_acc, n_yz= self.test_inference()
@@ -461,7 +461,7 @@ class Server(object):
         if self.ret: return test_acc, rd
 
     def AdversarialLearning(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, 
-                    optimizer = "adam", epsilon = None, alpha = 0.005, sensitive_level = 2, num_classes = 2):
+                    optimizer = "adam", epsilon = None, alpha = 0.005, sensitive_level = 2, num_classes = 2, adaptive_lr = False):
         # set seed
         np.random.seed(self.seed)
         random.seed(self.seed)
@@ -534,7 +534,9 @@ class Server(object):
                         100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
 
             if epsilon: 
-                if self.disparity(n_yz) < epsilon: break
+                if self.disparity(n_yz) < epsilon and train_accuracy[-1] > 0.5: break
+
+            if adaptive_lr: learning_rate = self.disparity(n_yz_c)/100
 
         # Test inference after completion of training
         test_acc, n_yz= self.test_inference()
@@ -552,7 +554,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd
 
-    def BiasCorrecting(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, alpha = 0.005, 
+    def BiasCorrecting(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, alpha = 0.1, 
                     optimizer = "adam", epsilon = None):
         # set seed
         np.random.seed(self.seed)
@@ -563,23 +565,25 @@ class Server(object):
         train_loss, train_accuracy = [], []
         start_time = time.time()
         weights = self.model.state_dict()
-        mu = torch.tensor([0,0])
+        mu = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
         
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses = [], []
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
             
-            n, nz, yz = 0, torch.tensor([0,0]), torch.tensor([0,0])
+            n, nz, yz, yhat = 0, torch.tensor([0,0]), torch.tensor([0,0]), 0
+            nc = []
             for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
                             batch_size = self.batch_size, option = "bias correcting", seed = self.seed, prn = self.train_prn)
-                n_, nz_, yz_ = local_model.bc_compute(copy.deepcopy(self.model), 
+                n_, nz_, yz_, yhat_ = local_model.bc_compute(copy.deepcopy(self.model), 
                             mu, self.train_dataset, self.clients_idx[c])
-                n, nz, yz = n + n_, nz + nz_, yz + yz_
+                n, nz, yz, yhat = n + n_, nz + nz_, yz + yz_, yhat + yhat_
+                nc.append(n_)
 
-            delta = torch.tensor([0,0])
-            delta[0], delta[1] = n/nz[0]*yz[0], n/nz[1]*yz[1]
-            mu[0], mu[1] = mu[0] - alpha * delta[0], mu[1] - alpha * delta[1]
+            delta = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
+            delta[0], delta[1] = yz[0]/nz[0] - yhat/n, yz[1]/nz[1] - yhat/n
+            mu = mu - alpha * delta
 
             self.model.train()
             m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
@@ -597,7 +601,8 @@ class Server(object):
                 local_losses.append(copy.deepcopy(loss))
 
             # update global weights
-            weights = average_weights(local_weights, self.clients_idx, idxs_users)
+            # weights = average_weights(local_weights, self.clients_idx, idxs_users)
+            weights = weighted_average_weights(local_weights, nc, n)
             self.model.load_state_dict(weights)
 
             loss_avg = sum(local_losses) / len(local_losses)
@@ -633,7 +638,7 @@ class Server(object):
                         100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
 
             if epsilon: 
-                if self.disparity(n_yz) < epsilon: break
+                if self.disparity(n_yz) < epsilon and train_accuracy[-1] > 0.5: break
 
         # Test inference after completion of training
         test_acc, n_yz= self.test_inference()
