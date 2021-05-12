@@ -11,14 +11,12 @@ class FairBatch(Sampler):
     """
     def __init__(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0):
         """Initializes FairBatch."""
-        
-        np.random.seed(seed)
-        random.seed(seed)
 
         self.batch_size = batch_size
         self.N = train_dataset.y.shape[0]
         self.batch_num = int(self.N / self.batch_size)
         self.lbd = lbd
+        self.seed = seed
         
         self.yz_index, self.yz_size = {}, {}
         
@@ -40,7 +38,9 @@ class FairBatch(Sampler):
             Indices that indicate the data.
             
         """
-        
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
         select_index = []
         
         if replacement == True:
@@ -68,6 +68,8 @@ class FairBatch(Sampler):
             Indices that indicate the data in each batch.
             
         """
+        np.random.seed(self.seed)
+        random.seed(self.seed)
 
         # Get the indices for each class
         sort_index_y_1_z_1 = self.select_batch_replacement(int(self.lbd[(1,1)] * (self.yz_size[(1,1)] + self.yz_size[(1,0)])), self.yz_index[(1,1)], self.batch_num)
