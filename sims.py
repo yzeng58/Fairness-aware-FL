@@ -27,8 +27,8 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
             test_acc_i, rd_i = server.Unconstrained(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer)
 
-        elif option == 'Zafar':
-            test_acc_i, rd_i = server.Zafar(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+        elif option == 'local zafar':
+            test_acc_i, rd_i = server.LocalZafar(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, penalty = penalty, epsilon = epsilon)
 
         elif option == 'threshold adjusting':

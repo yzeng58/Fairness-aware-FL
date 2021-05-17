@@ -22,6 +22,7 @@ class Client(object):
     def __init__(self, dataset, idxs, batch_size, option, seed = 0, prn = True, lbd = None, penalty = 500):
         self.seed = seed 
         self.dataset = dataset
+        self.idxs = idxs
         self.option = option
         self.prn = prn
         self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, lbd)
@@ -189,7 +190,7 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
-    def bc_compute(self, model, mu, dataset, idxs):
+    def bc_compute(self, model, mu):
         model.eval()
 
         # set seed
@@ -197,7 +198,7 @@ class Client(object):
         random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        trainloader = DatasetSplit(dataset, idxs)      
+        trainloader = DatasetSplit(self.dataset, self.idxs)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
         x = x.to(DEVICE)
 
@@ -218,6 +219,54 @@ class Client(object):
         nz[1] = v[z1_idx].sum().item()
 
         return n, nz, yz, yhat
+
+    def mean_sensitive_stat(self): 
+        trainloader = DatasetSplit(self.dataset, self.idxs)      
+        z = torch.tensor(trainloader.sen)
+        return z.sum().item(), len(z)
+
+    def zafar_update(self, model, global_round, learning_rate, local_epochs, optimizer, mean_z, left = True):
+        # Set mode to train model
+        model.train()
+        epoch_loss = []
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # Set optimizer for the local updates
+        if optimizer == 'sgd':
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
+                                        ) # momentum=0.5
+        elif optimizer == 'adam':
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                        weight_decay=1e-4)
+        for i in range(local_epochs):
+            batch_loss = []
+            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+                # we need to set the gradients to zero before starting to do backpropragation 
+                # because PyTorch accumulates the gradients on subsequent backward passes. 
+                # This is convenient while training RNNs
+                
+                probas, logits = model(features)
+                loss = zafar_loss(logits, labels, probas, sensitive, self.penalty, mean_z, left)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
+                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
+                        global_round + 1, i, batch_idx * len(features),
+                        len(self.trainloader.dataset),
+                        100. * batch_idx / len(self.trainloader), loss.item()))
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+        # weight, loss
+        return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
     def al_update(self, model, adv_model, global_round, learning_rate, local_epochs, optimizer, alpha): 
         # Set mode to train model
