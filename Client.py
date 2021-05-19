@@ -221,7 +221,7 @@ class Client(object):
 
         return n, nz, yz, yhat
 
-    def newbc_compute(self, model, mu):
+    def bc1_compute(self, model, mu):
         model.eval()
 
         # set seed
