@@ -120,7 +120,7 @@ def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
     fair_loss1 = torch.mean(torch.mul(fair_loss1, fair_loss1)) 
     fair_loss = fair_loss0 + fair_loss1
 
-    if option == 'Zafar':
+    if option == 'local zafar':
         return acc_loss + larg*fair_loss, acc_loss, larg*fair_loss
     elif option == 'FB_inference':
         # acc_loss = torch.sum(torch.nn.BCELoss(reduction = 'none')((outputs.T[1]+1)/2, torch.ones(logits.shape[0])))
@@ -128,6 +128,14 @@ def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
         return acc_loss, acc_loss, fair_loss
     else:
         return acc_loss, acc_loss, larg*fair_loss
+
+def zafar_loss(logits, targets, outputs, sensitive, larg, mean_z, left):
+    acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
+    fair_loss =  torch.mean(torch.mul(sensitive - mean_z, logits.T[0] - torch.mean(logits.T[0])))
+    if left:
+        return acc_loss - larg * fair_loss
+    else:
+        return acc_loss + larg * fair_loss
 
 def weighted_loss(logits, targets, weights):
     acc_loss = F.cross_entropy(logits, targets, reduction = 'none')

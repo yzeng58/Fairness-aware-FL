@@ -6,7 +6,8 @@ import time
 def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 5, 
           local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch",
           optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
-          adjusting_alpha = 0.7, epsilon = 0.02, adaptive_lr = True):
+          adjusting_alpha = 0.7, epsilon = 0.02, adaptive_lr = True, test_lr = 0.01, test_rounds = 3,
+          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, lambda_d = 0.8):
     """
     Run simulations.
     """
@@ -27,8 +28,8 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
             test_acc_i, rd_i = server.Unconstrained(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer)
 
-        elif option == 'Zafar':
-            test_acc_i, rd_i = server.Zafar(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+        elif option == 'local zafar':
+            test_acc_i, rd_i = server.LocalZafar(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, penalty = penalty, epsilon = epsilon)
 
         elif option == 'threshold adjusting':
@@ -50,6 +51,17 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
             test_acc_i, rd_i = server.BiasCorrecting(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, epsilon = epsilon, alpha = alpha)
 
+        elif option == 'zafar':
+            test_acc_i, rd_i = server.Zafar(test_rounds = test_rounds, test_lr = test_lr, num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, penalty = penalty)
+
+        elif option == 'ftrain':
+            test_acc_i, rd_i = server.FTrain(num_rounds = num_rounds, local_epochs = local_epochs, init_epochs = init_epochs, 
+                lr_g = lr_g, lr_d = lr_d, lambda_d = lambda_d)
+
+        elif option == 'alternative bias correcting':
+            test_acc_i, rd_i = server.newBC(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, epsilon = epsilon, alpha = alpha)
         # train the model with the synthetic dataset
 
         test_acc.append(test_acc_i)
