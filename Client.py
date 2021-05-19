@@ -1,3 +1,4 @@
+from numpy.core.fromnumeric import squeeze
 import torch, copy, time, random, warnings
 
 import numpy as np
@@ -220,6 +221,40 @@ class Client(object):
 
         return n, nz, yz, yhat
 
+    def newbc_compute(self, model, mu):
+        model.eval()
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        trainloader = DatasetSplit(self.dataset, self.idxs)      
+        x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
+        x = x.to(DEVICE)
+
+        probas, _ = model(x)
+        _, pred_labels = torch.max(probas, 1)
+        prob = [0,0]
+        prob[0] = torch.sum((pred_labels == 1) & (z == 0)).item() / torch.sum(z == 0).item()
+        prob[1] = torch.sum((pred_labels == 1) & (z == 1)).item() / torch.sum(z == 1).item()
+
+        v = torch.ones(len(y)).type(torch.DoubleTensor)
+
+        n, nz, yz = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
+        # z_i = 0
+        z0_idx = torch.where(z == 0)[0]
+        yz[0] = (prob[0] * v[z0_idx]).sum().item()
+        nz[0] = v[z0_idx].sum().item()
+
+        # z_i = 1
+        z1_idx = torch.where(z == 1)[0]
+        yz[1] = (prob[1] * v[z1_idx]).sum().item()
+        nz[1] = v[z1_idx].sum().item()
+
+        yhat = yz[0] + yz[1]
+        return n, nz, yz, yhat
+
     def mean_sensitive_stat(self): 
         trainloader = DatasetSplit(self.dataset, self.idxs)      
         z = torch.tensor(trainloader.sen)
@@ -385,6 +420,78 @@ class Client(object):
                                          adv_loss + batch_adv_loss.item())
         accuracy = correct/total
         return accuracy, n_yz, acc_loss / num_batch, adv_loss / num_batch
+
+    def ftrain_update(self, generator, discriminator, global_round, lr_g, lr_d, local_epochs, ratio_gd, lambda_d, init_epochs = 100):
+        # Set mode to train model
+        generator.train()
+        epoch_loss = []
+        
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # Set optimizer for the local updates
+        optimizer_G = torch.optim.Adam(generator.parameters(), lr = lr_g)
+        optimizer_D = torch.optim.SGD(discriminator.parameters(), lr = lr_d)
+
+        for i in range(local_epochs):
+            batch_loss = []
+            epoch = global_round * local_epochs + i
+
+            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+
+                # for the first 100 epochs, train both generator and discriminator
+                # after the first 100 epochs, ratio of updating generator and discriminator (1:ratio_gd training)
+                if epoch % ratio_gd == 0 or epoch < init_epochs:
+                    # forward generator
+                    optimizer_G.zero_grad()
+                
+                _, logits_g = generator(features)
+
+                # train fairness discriminator
+                optimizer_D.zero_grad()
+                loss_d = F.cross_entropy(discriminator(logits_g.detach())[1], sensitive)
+                loss_d.backward()
+                optimizer_D.step()
+
+                loss_g = F.cross_entropy(logits_g, labels)
+                # update generator
+                if epoch < init_epochs:
+                    loss_g.backward()
+                    optimizer_G.step()
+
+                elif epoch % ratio_gd == 0:
+                    _, logits_d = discriminator(logits_g)
+                    loss_d = F.cross_entropy(logits_d, sensitive)
+                    
+                    loss = (1-lambda_d) * loss_g - lambda_d * loss_d
+                    loss.backward()
+                    optimizer_G.step()
+
+                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
+                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
+                        global_round + 1, i, batch_idx * len(features),
+                        len(self.trainloader.dataset),
+                        100. * batch_idx / len(self.trainloader), loss_g.item()))
+                batch_loss.append(loss_g.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+        # weight, loss
+        return generator.state_dict(), discriminator.state_dict(), sum(epoch_loss) / len(epoch_loss)
+
+    def get_n_yz(self):
+        trainloader = DatasetSplit(self.dataset, self.idxs)      
+        x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
+        x = x.to(DEVICE)
+
+        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        for y_, z_ in n_yz:
+            n_yz[(y_,z_)] = torch.sum((y == y_) & (z == z_)).item()
+
+        return n_yz
 
     def inference(self, model):
         """ 
