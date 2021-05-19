@@ -7,7 +7,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
           local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch",
           optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
           adjusting_alpha = 0.7, epsilon = 0.02, adaptive_lr = True, test_lr = 0.01, test_rounds = 3,
-          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, lambda_d = 0.8):
+          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, lambda_d = 0.8, bs_iter = 10):
     """
     Run simulations.
     """
@@ -24,6 +24,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         synthetic_info = dataGenerate(seed = seed, train_samples = train_samples, test_samples = test_samples)
         
         server = Server(logReg(num_features=3, num_classes=2, seed=seed), synthetic_info, seed = seed, ret = True, train_prn = False, metric = metric)
+        # train the model with the synthetic dataset
         if option == 'unconstrained':
             test_acc_i, rd_i = server.Unconstrained(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer)
@@ -59,11 +60,13 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
             test_acc_i, rd_i = server.FTrain(num_rounds = num_rounds, local_epochs = local_epochs, init_epochs = init_epochs, 
                 lr_g = lr_g, lr_d = lr_d, lambda_d = lambda_d)
 
-        elif option == 'alternative bias correcting':
-            test_acc_i, rd_i = server.newBC(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+        elif option == 'bc-variant1':
+            test_acc_i, rd_i = server.BCVariant1(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, epsilon = epsilon, alpha = alpha)
-        # train the model with the synthetic dataset
-
+        
+        elif option == 'bc-variant2':
+            test_acc_i, rd_i = server.BCVariant2(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, epsilon = epsilon, bs_iter = bs_iter)
         test_acc.append(test_acc_i)
         rd.append(rd_i)
         
