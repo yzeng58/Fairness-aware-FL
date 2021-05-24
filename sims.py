@@ -67,6 +67,13 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         elif option == 'bc-variant2':
             test_acc_i, rd_i = server.BCVariant2(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, epsilon = epsilon, bs_iter = bs_iter)
+
+        elif option == 'fb-variant1':
+            test_acc_i, rd_i = server.FBVariant1(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, adaptive_alpha = adaptive_alpha, alpha = alpha)
+        else:
+            print('Approach %s is not supported!' % option)
+            return None
         test_acc.append(test_acc_i)
         rd.append(rd_i)
         
