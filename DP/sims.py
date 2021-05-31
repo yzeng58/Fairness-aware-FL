@@ -73,8 +73,8 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
                 optimizer = optimizer, epsilon = epsilon, alpha = alpha)
                 
         elif option == 'fb-variant1':
-            test_acc_i, rd_i = server.FBVariant1(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
-                optimizer = optimizer, adaptive_alpha = adaptive_alpha, alpha = alpha, adaptive_lr = adaptive_lr)
+            test_acc_i, rd_i = server.FBVariant2(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, alpha = alpha)
 
         elif option == 'fb-variant2':
             test_acc_i, rd_i = server.FBVariant2(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 

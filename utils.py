@@ -1,4 +1,4 @@
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 import numpy as np
 import torch.nn.functional as F
 import pandas as pd
@@ -84,6 +84,22 @@ def DPDisparity(n_yz):
     return max(abs(n_yz[(1,0)]/n_z0 - p_y1), 
         abs(n_yz[(1,1)]/n_z1 - p_y1))
 
+def EODisparity(n_eyz):
+    """
+    Equal opportunity disparity: max_z{|P(yhat=1|z=z,y=1)-P(yhat=1|y=1)|}
+
+    Parameter:
+    n_eyz: dictionary. #(yhat=e,y=y,z=z)
+    """
+    z_set = list(set([z for _,_, z in n_eyz.keys()]))
+    eod = 0
+    p11 = sum([n_eyz[(1,1,z)] for z in z_set]) / sum([n_eyz[(1,1,z)]+n_eyz[(0,1,z)] for z in z_set])
+    for z in z_set:
+        eod_z = abs(n_eyz[(1,1,z)]/(n_eyz[(0,1,z)] + n_eyz[(1,1,z)]) - p11)
+        if eod < eod_z:
+            eod = eod_z
+    return eod
+
 def average_weights(w, clients_idx, idx_users):
     """
     Returns the average of the weights.
@@ -159,9 +175,9 @@ X_DIST = {0:{"mean":(-2,-2), "cov":np.array([[10,1], [1,3]])},
 def X_PRIME(x):
     return (x[0]*np.cos(np.pi/4) - x[1]*np.sin(np.pi/4), 
             x[0]*np.sin(np.pi/4) + x[1]*np.cos(np.pi/4))
-def Z_MEAN(x, y):
+def Z_MEAN(x):
     """
-    Given x and y, the probability of z = 1.
+    Given x, the probability of z = 1.
     """
     x_transform = X_PRIME(x)
     return multivariate_normal.pdf(x_transform, mean = X_DIST[1]["mean"], cov = X_DIST[1]["cov"])/(
@@ -187,7 +203,7 @@ def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500,
 
     for y in ys:
         x = np.random.multivariate_normal(mean = X_DIST[y]["mean"], cov = X_DIST[y]["cov"], size = 1)[0]
-        z = np.random.binomial(n = 1, p = Z_MEAN(x,y), size = 1)[0]
+        z = np.random.binomial(n = 1, p = Z_MEAN(x), size = 1)[0]
         xs.append(x)
         zs.append(z)
 

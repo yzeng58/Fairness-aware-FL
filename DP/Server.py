@@ -1,13 +1,16 @@
-import torch, copy, time, random, warnings
+# Server for Demographic parity
+
+import torch, copy, time, random, warnings, sys
 
 import numpy as np
 
 import torch
 from tqdm import tqdm
-from torch import nn
 from torch.utils.data import DataLoader
 
 from Client import *
+
+sys.path.insert(0, '..')
 from utils import *
 from fairBatch import *
 
@@ -1266,7 +1269,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd    
 
-    def FBVariant1(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 1, adaptive_alpha = True, adaptive_lr = True):
+    def FBVariant1(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
         # set seed
         np.random.seed(self.seed)
         random.seed(self.seed)
@@ -1284,12 +1287,12 @@ class Server(object):
             (1,1): ((self.train_dataset.y == 1) & (self.train_dataset.sen == 1)).sum()}
 
         lbd = {
-            (0,0): m_yz[(0,0)]/(m_yz[(0,1)] + m_yz[(0,0)]), 
-            (0,1): m_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(0,0)]),
-            (1,0): m_yz[(1,0)]/(m_yz[(1,1)] + m_yz[(1,0)]),
-            (1,1): m_yz[(1,1)]/(m_yz[(1,1)] + m_yz[(1,0)]),
+            (0,0): m_yz[(0,0)]/(m_yz[(1,0)] + m_yz[(0,0)]), 
+            (0,1): m_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)]),
+            (1,0): m_yz[(1,0)]/(m_yz[(1,0)] + m_yz[(0,0)]),
+            (1,1): m_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)]),
         }
-        
+
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses, nc = [], [], []
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
@@ -1301,7 +1304,7 @@ class Server(object):
             for idx in idxs_users:
                 local_model = Client(dataset=self.train_dataset,
                                             idxs=self.clients_idx[idx], batch_size = self.batch_size, 
-                                        option = "FB-Variant1", 
+                                        option = "FB-Variant1", lbd = lbd, 
                                         seed = self.seed, prn = self.train_prn)
 
                 w, loss, nc_ = local_model.fb_update(
@@ -1347,19 +1350,20 @@ class Server(object):
             loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
             loss_yz[(1,1)] = loss_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
 
-            # for y,z in loss_yz:
-            #     loss_yz[(y,z)] = loss_yz[(0,0)]/m_yz[(y,z)] * lbd[(y,z)]
-            
-            y0_diff = abs(loss_yz[(0,0)] - loss_yz[(0,1)])
-            y1_diff = abs(loss_yz[(1,0)] - loss_yz[(1,1)])
-            print(loss_yz)
-
-            if y1_diff < y0_diff:
-                lbd[(0,0)] += alpha * (2*int((loss_yz[(0,1)] - loss_yz[(0,0)]) > 0)-1)
+            y0_diff = loss_yz[(0,0)] - loss_yz[(0,1)]
+            y1_diff = loss_yz[(1,0)] - loss_yz[(1,1)]
+            if y0_diff > y1_diff:
+                lbd[(0,0)] -= alpha / (round_+1)
+                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
+                lbd[(1,0)] = 1 - lbd[(0,0)]
+                lbd[(0,1)] += alpha / (round_+1)
+                lbd[(0,1)] = min(max(0, lbd[(0,1)]), 1)
+                lbd[(1,1)] = 1 - lbd[(0,1)]
+            else:
+                lbd[(0,0)] += alpha / (round_+1)
                 lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
                 lbd[(0,1)] = 1 - lbd[(0,0)]
-            else:
-                lbd[(1,0)] -= alpha * (2*int((loss_yz[(1,1)] - loss_yz[(1,0)]) > 0)-1)
+                lbd[(1,0)] -= alpha / (round_+1)
                 lbd[(1,0)] = min(max(0, lbd[(1,0)]), 1)
                 lbd[(1,1)] = 1 - lbd[(1,0)]
 
@@ -1373,8 +1377,6 @@ class Server(object):
                         np.mean(np.array(train_loss)), 
                         100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
 
-            if adaptive_alpha: alpha = max(DPDisparity(n_yz),0.01)
-            if adaptive_lr: learning_rate = max(DPDisparity(n_yz),0.01)/5
 
         # Test inference after completion of training
         test_acc, n_yz = self.test_inference(self.model, self.test_dataset)
