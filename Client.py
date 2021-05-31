@@ -52,7 +52,7 @@ class Client(object):
                                      batch_size=batch_size, shuffle=True)
 
         validloader = DataLoader(DatasetSplit(dataset, idxs_val),
-                                     batch_size=int(len(idxs_val)/10), shuffle=False)
+                                     batch_size=max(int(len(idxs_val)/10),10), shuffle=False)
         return trainloader, validloader
 
     def standard_update(self, model, global_round, learning_rate, local_epochs, optimizer): 
@@ -220,6 +220,57 @@ class Client(object):
         nz[1] = v[z1_idx].sum().item()
 
         return n, nz, yz, yhat
+
+    def bc3_update(self, model, mu, global_round, learning_rate, local_epochs, optimizer):
+        # Set mode to train model
+        model.train()
+        epoch_loss = []
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # Set optimizer for the local updates
+        if optimizer == 'sgd':
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
+                                        momentum=0.5) # 
+        elif optimizer == 'adam':
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                        weight_decay=1e-4)
+        for i in range(local_epochs):
+            batch_loss = []
+            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+                
+                v = torch.randn(len(labels)).type(torch.DoubleTensor)
+                # labels_i == 1
+                y1_idx = torch.where(labels == 1)[0]
+                exp = np.exp(mu[sensitive[y1_idx]])
+                v[y1_idx] = exp
+
+                # labels_i == 0
+                y0_idx = torch.where(labels == 0)[0]
+                exp = np.exp(mu[sensitive[y0_idx]])
+                v[y0_idx] = 1 
+
+                _, logits = model(features)
+                loss = weighted_loss(logits, labels, v)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
+                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
+                        global_round + 1, i, batch_idx * len(features),
+                        len(self.trainloader.dataset),
+                        100. * batch_idx / len(self.trainloader), loss.item()))
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+        # weight, loss
+        return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
     def bc1_compute(self, model, mu):
         model.eval()
@@ -482,6 +533,59 @@ class Client(object):
         # weight, loss
         return generator.state_dict(), discriminator.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
+    def fb_update(self, model, global_round, learning_rate, local_epochs, optimizer, lbd, m_yz):
+        # Set mode to train model
+        model.train()
+        epoch_loss = []
+        nc = 0
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # Set optimizer for the local updates
+        if optimizer == 'sgd':
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
+                                        momentum=0.5) # 
+        elif optimizer == 'adam':
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                        weight_decay=1e-4)
+        for i in range(local_epochs):
+            batch_loss = []
+            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+                _, logits = model(features)
+
+                v = torch.randn(len(labels)).type(torch.DoubleTensor)
+                
+                group_idx = {}
+                
+                for y, z in lbd:
+                    group_idx[(y,z)] = torch.where((labels == y) & (sensitive == z))[0]
+                    v[group_idx[(y,z)]] = lbd[(y,z)] * (m_yz[(y,z)] + m_yz[(y, 1-z)]) / m_yz[(y,z)]
+                    nc += v[group_idx[(y,z)]].sum().item()
+
+                # print(logits)
+                loss = weighted_loss(logits, labels, v)
+                # if global_round == 1: print(loss)
+
+                optimizer.zero_grad()
+                if not np.isnan(loss.item()): loss.backward()
+                optimizer.step()
+
+                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
+                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
+                        global_round + 1, i, batch_idx * len(features),
+                        len(self.trainloader.dataset),
+                        100. * batch_idx / len(self.trainloader), loss.item()))
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+        # weight, loss
+        return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc
+
     def get_n_yz(self):
         trainloader = DatasetSplit(self.dataset, self.idxs)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
@@ -530,11 +634,12 @@ class Client(object):
             group_boolean_idx = {}
             
             for yz in n_yz:
-                group_boolean_idx[yz] = (pred_labels == yz[0]) & (sensitive == yz[1])
-                n_yz[yz] += torch.sum(group_boolean_idx[yz]).item()     
+                group_boolean_idx[yz] = (labels == yz[0]) & (sensitive == yz[1])
+                n_yz[yz] += torch.sum((pred_labels == yz[0]) & (sensitive == yz[1])).item()     
                 
                 if self.option == "FairBatch":
                 # the objective function have no lagrangian term
+
                     loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
                                          outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 
@@ -547,7 +652,7 @@ class Client(object):
                                          acc_loss + batch_acc_loss.item(), 
                                          fair_loss + batch_fair_loss.item())
         accuracy = correct/total
-        if self.option == "FairBatch":
+        if self.option in ["FairBatch", "FB-Variant1"]:
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, loss_yz
         else:
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, None

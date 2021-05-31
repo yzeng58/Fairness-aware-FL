@@ -113,6 +113,7 @@ def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
     """
     Loss function. 
     """
+
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
     fair_loss0 = torch.mul(sensitive - sensitive.type(torch.FloatTensor).mean(), logits.T[0] - torch.mean(logits.T[0]))
     fair_loss0 = torch.mean(torch.mul(fair_loss0, fair_loss0)) 

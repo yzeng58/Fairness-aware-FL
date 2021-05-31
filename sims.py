@@ -7,7 +7,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
           local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch",
           optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
           adjusting_alpha = 0.7, epsilon = 0.02, adaptive_lr = True, test_lr = 0.01, test_rounds = 3,
-          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, lambda_d = 0.8, bs_iter = 10):
+          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, lambda_d = 0.8, bs_iter = 10, alpha_decay = 0.5):
     """
     Run simulations.
     """
@@ -67,6 +67,23 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         elif option == 'bc-variant2':
             test_acc_i, rd_i = server.BCVariant2(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, epsilon = epsilon, bs_iter = bs_iter)
+
+        elif option == 'bc-variant3':
+            test_acc_i, rd_i = server.BCVariant3(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, epsilon = epsilon, alpha = alpha)
+                
+        elif option == 'fb-variant1':
+            test_acc_i, rd_i = server.FBVariant1(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, adaptive_alpha = adaptive_alpha, alpha = alpha, adaptive_lr = adaptive_lr)
+
+        elif option == 'fb-variant2':
+            test_acc_i, rd_i = server.FBVariant2(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, alpha = alpha, alpha_decay = alpha_decay)
+
+        else:
+            print('Approach %s is not supported!' % option)
+            return None
+
         test_acc.append(test_acc_i)
         rd.append(rd_i)
         
