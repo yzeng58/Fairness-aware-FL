@@ -225,7 +225,7 @@ class Client(object):
         z = torch.tensor(trainloader.sen)
         return z.sum().item(), len(z)
 
-    def zafar_update(self, model, global_round, learning_rate, local_epochs, optimizer, mean_z, left = True):
+    def fc_update(self, model, global_round, learning_rate, local_epochs, optimizer, mean_z1, left = True):
         # Set mode to train model
         model.train()
         epoch_loss = []
@@ -251,8 +251,8 @@ class Client(object):
                 # because PyTorch accumulates the gradients on subsequent backward passes. 
                 # This is convenient while training RNNs
                 
-                probas, logits = model(features)
-                loss = zafar_loss(logits, labels, probas, sensitive, self.penalty, mean_z, left)
+                _, logits = model(features)
+                loss = eo_loss(logits, labels, sensitive, self.penalty, mean_z1, left)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -267,185 +267,6 @@ class Client(object):
 
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
-
-    def al_update(self, model, adv_model, global_round, learning_rate, local_epochs, optimizer, alpha): 
-        # Set mode to train model
-        model.train()
-        epoch_loss = []
-        
-        # set seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
-        # Set optimizer for the local updates
-        if optimizer == 'sgd':
-            adv_optimizer = torch.optim.SGD(adv_model.parameters(), lr=learning_rate,
-                                        ) # momentum=0.5     
-
-            optimizer1 = torch.optim.SGD(model.parameters(), lr=learning_rate)
-            optimizer2 = torch.optim.SGD(model.parameters(), lr=learning_rate * alpha)
-        elif optimizer == 'adam':
-            adv_optimizer = torch.optim.Adam(adv_model.parameters(), lr=learning_rate, weight_decay=1e-4)
-            optimizer1 = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-            optimizer2 = torch.optim.Adam(model.parameters(), lr=learning_rate * alpha, weight_decay=1e-4)
-
-        for i in range(local_epochs):
-            learning_rate = learning_rate * (1. / (1. + 1e-4 * (global_round*local_epochs + i)))
-            alpha = alpha * (1. / (1. + 1e-4 * (global_round*local_epochs + i)))
-
-            batch_loss = []
-            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                sensitive = sensitive.to(DEVICE)
-                
-                _, logits = model(features)
-                # _, pred_labels = torch.max(probas, 1)
-                # pred_label_matrix = torch.tensor([1-pred_labels, pred_labels]).T
-
-                # _, adv_logits = adv_model(pred_labels.reshape(labels.shape[0],1))  
-                _, adv_logits = adv_model(logits)       
-                loss, adv_loss = al_loss(logits, labels, adv_logits, sensitive)
-                neg_adv_loss = -adv_loss
-
-                # classification model
-                # w = w - lr * partial predictor_loss / partial w
-                optimizer1.zero_grad()
-                loss.backward(retain_graph = True)
-                g1 = torch.cat((model.linear.weight.grad.T, model.linear.bias.grad.reshape(1,2)), dim = 0).T
-
-                # classification model
-                # w = w - lr * (-alpha * partial adversary_loss / partial w)
-                optimizer2.zero_grad()
-                neg_adv_loss.backward(retain_graph = True)
-                g2 = -torch.cat((model.linear.weight.grad.T, model.linear.bias.grad.reshape(1,2)), dim = 0).T
-
-                # adversarial model
-                adv_optimizer.zero_grad()
-                adv_loss.backward()
-
-                # update
-                # optimizer1.step()
-                # optimizer2.step()
-                adv_optimizer.step()
-
-                # classification model
-                # w = w - lr * (- proj partial adversary_loss / partial w, partial predictor_loss / partial w)
-                w = model.state_dict()
-                proj = torch.mul(g1[0], g2[0]) / torch.sqrt(torch.mul(g2[0], g2[0]))
-
-                w['linear.weight'][0] = w['linear.weight'][0] + learning_rate * proj[:-1] - learning_rate * g1[0][:-1] + alpha * learning_rate * g2[0][:-1]
-                w['linear.weight'][1] = w['linear.weight'][1] - learning_rate * proj[:-1] - learning_rate * g1[1][:-1] + alpha * learning_rate * g2[1][:-1]
-                w['linear.bias'][0] = w['linear.bias'][0] + learning_rate * proj[-1] - learning_rate * g1[0][-1] + alpha * learning_rate * g2[0][-1]
-                w['linear.bias'][1] = w['linear.bias'][0] - learning_rate * proj[-1] - learning_rate * g1[1][-1] + alpha * learning_rate * g2[1][-1]
-
-                # update
-                model.load_state_dict(w)
-
-                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
-                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
-                        global_round + 1, i, batch_idx * len(features),
-                        len(self.trainloader.dataset),
-                        100. * batch_idx / len(self.trainloader), loss.item()))
-                batch_loss.append(loss.item())
-            epoch_loss.append(sum(batch_loss)/len(batch_loss))
-
-        # weight, loss
-        return model.state_dict(), adv_model.state_dict(), sum(epoch_loss) / len(epoch_loss)
-
-    def al_inference(self, model, adv_model):
-        model.eval()
-        total, correct, acc_loss, adv_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-        
-        for _, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-            sensitive = sensitive.to(DEVICE)
-            
-            # Inference
-            outputs, logits = model(features)
-            _, adv_logits = adv_model(logits)
-
-            # Prediction
-            _, pred_labels = torch.max(outputs, 1)
-            pred_labels = pred_labels.view(-1)
-            bool_correct = torch.eq(pred_labels, labels)
-            correct += torch.sum(bool_correct).item()
-            total += len(labels)
-            num_batch += 1
-            
-            group_boolean_idx = {}
-            
-            for yz in n_yz:
-                group_boolean_idx[yz] = (pred_labels == yz[0]) & (sensitive == yz[1])
-                n_yz[yz] += torch.sum(group_boolean_idx[yz]).item()     
-            
-            batch_acc_loss, batch_adv_loss = al_loss(logits, labels, adv_logits, sensitive)
-            acc_loss, adv_loss = (acc_loss + batch_acc_loss.item(), 
-                                         adv_loss + batch_adv_loss.item())
-        accuracy = correct/total
-        return accuracy, n_yz, acc_loss / num_batch, adv_loss / num_batch
-
-    def ftrain_update(self, generator, discriminator, global_round, lr_g, lr_d, local_epochs, ratio_gd, lambda_d, init_epochs = 100):
-        # Set mode to train model
-        generator.train()
-        epoch_loss = []
-        
-        # set seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
-        # Set optimizer for the local updates
-        optimizer_G = torch.optim.Adam(generator.parameters(), lr = lr_g)
-        optimizer_D = torch.optim.SGD(discriminator.parameters(), lr = lr_d)
-
-        for i in range(local_epochs):
-            batch_loss = []
-            epoch = global_round * local_epochs + i
-
-            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                sensitive = sensitive.to(DEVICE)
-
-                # for the first 100 epochs, train both generator and discriminator
-                # after the first 100 epochs, ratio of updating generator and discriminator (1:ratio_gd training)
-                if epoch % ratio_gd == 0 or epoch < init_epochs:
-                    # forward generator
-                    optimizer_G.zero_grad()
-                
-                _, logits_g = generator(features)
-
-                # train fairness discriminator
-                optimizer_D.zero_grad()
-                loss_d = F.cross_entropy(discriminator(logits_g.detach())[1], sensitive)
-                loss_d.backward()
-                optimizer_D.step()
-
-                loss_g = F.cross_entropy(logits_g, labels)
-                # update generator
-                if epoch < init_epochs:
-                    loss_g.backward()
-                    optimizer_G.step()
-
-                elif epoch % ratio_gd == 0:
-                    _, logits_d = discriminator(logits_g)
-                    loss_d = F.cross_entropy(logits_d, sensitive)
-                    
-                    loss = (1-lambda_d) * loss_g - lambda_d * loss_d
-                    loss.backward()
-                    optimizer_G.step()
-
-                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
-                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
-                        global_round + 1, i, batch_idx * len(features),
-                        len(self.trainloader.dataset),
-                        100. * batch_idx / len(self.trainloader), loss_g.item()))
-                batch_loss.append(loss_g.item())
-            epoch_loss.append(sum(batch_loss)/len(batch_loss))
-
-        # weight, loss
-        return generator.state_dict(), discriminator.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
     def fb_update(self, model, global_round, learning_rate, local_epochs, optimizer, lbd, m_1z, m):
         # Set mode to train model
