@@ -154,6 +154,8 @@ class Client(object):
         random.seed(self.seed)
         torch.manual_seed(self.seed)
 
+        nc = 0
+
         # Set optimizer for the local updates
         if optimizer == 'sgd':
             optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
@@ -184,6 +186,8 @@ class Client(object):
                 loss.backward()
                 optimizer.step()
 
+                nc += sum(v)
+
                 if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
                     print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
                         global_round + 1, i, batch_idx * len(features),
@@ -193,9 +197,9 @@ class Client(object):
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
 
         # weight, loss
-        return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
+        return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc
 
-    def bc_compute(self, model, mu):
+    def bc_compute(self, model, px, pg):
         model.eval()
 
         # set seed
@@ -209,106 +213,12 @@ class Client(object):
 
         probas, _ = model(x)
         probas = probas.T[1] / torch.sum(probas, dim = 1)
+        delta = []
+        for z_ in range(self.Z):
+            delta.append(sum(probas * ((z == z_) * y / pg[z_] - y / px)))
+            delta[z_].detach()
 
-        v = torch.ones(len(y)).type(torch.DoubleTensor)
-
-        n, nz, yz, yhat = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), (probas * v).sum().item()
-        # z_i = 0
-        z0_idx = torch.where(z == 0)[0]
-        yz[0] = (probas[z0_idx] * v[z0_idx]).sum().item()
-        nz[0] = v[z0_idx].sum().item()
-
-        # z_i = 1
-        z1_idx = torch.where(z == 1)[0]
-        yz[1] = (probas[z1_idx] * v[z1_idx]).sum().item()
-        nz[1] = v[z1_idx].sum().item()
-
-        return n, nz, yz, yhat
-
-    def bc3_update(self, model, mu, global_round, learning_rate, local_epochs, optimizer):
-        # Set mode to train model
-        model.train()
-        epoch_loss = []
-
-        # set seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
-        # Set optimizer for the local updates
-        if optimizer == 'sgd':
-            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
-                                        momentum=0.5) # 
-        elif optimizer == 'adam':
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                        weight_decay=1e-4)
-        for i in range(local_epochs):
-            batch_loss = []
-            for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                sensitive = sensitive.to(DEVICE)
-                
-                v = torch.randn(len(labels)).type(torch.DoubleTensor)
-                # labels_i == 1
-                y1_idx = torch.where(labels == 1)[0]
-                exp = np.exp(mu[sensitive[y1_idx]])
-                v[y1_idx] = exp
-
-                # labels_i == 0
-                y0_idx = torch.where(labels == 0)[0]
-                exp = np.exp(mu[sensitive[y0_idx]])
-                v[y0_idx] = 1 
-
-                _, logits = model(features)
-                loss = weighted_loss(logits, labels, v)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                if self.prn and (100. * batch_idx / len(self.trainloader)) % 50 == 0:
-                    print('| Global Round : {} | Local Epoch : {} | [{}/{} ({:.0f}%)]\tBatch Loss: {:.6f}'.format(
-                        global_round + 1, i, batch_idx * len(features),
-                        len(self.trainloader.dataset),
-                        100. * batch_idx / len(self.trainloader), loss.item()))
-                batch_loss.append(loss.item())
-            epoch_loss.append(sum(batch_loss)/len(batch_loss))
-
-        # weight, loss
-        return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
-
-    def bc1_compute(self, model, mu):
-        model.eval()
-
-        # set seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
-        trainloader = DatasetSplit(self.dataset, self.idxs)      
-        x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
-        x = x.to(DEVICE)
-
-        probas, _ = model(x)
-        _, pred_labels = torch.max(probas, 1)
-        prob = [0,0]
-        prob[0] = torch.sum((pred_labels == 1) & (z == 0)).item() / torch.sum(z == 0).item()
-        prob[1] = torch.sum((pred_labels == 1) & (z == 1)).item() / torch.sum(z == 1).item()
-
-        v = torch.ones(len(y)).type(torch.DoubleTensor)
-
-        n, nz, yz = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
-        # z_i = 0
-        z0_idx = torch.where(z == 0)[0]
-        yz[0] = (prob[0] * v[z0_idx]).sum().item()
-        nz[0] = v[z0_idx].sum().item()
-
-        # z_i = 1
-        z1_idx = torch.where(z == 1)[0]
-        yz[1] = (prob[1] * v[z1_idx]).sum().item()
-        nz[1] = v[z1_idx].sum().item()
-
-        yhat = yz[0] + yz[1]
-        return n, nz, yz, yhat
+        return torch.tensor(delta).type(torch.DoubleTensor)
 
     def mean_sensitive_stat(self): 
         trainloader = DatasetSplit(self.dataset, self.idxs)      
