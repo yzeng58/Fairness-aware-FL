@@ -556,6 +556,105 @@ class Server(object):
 
         if self.ret: return test_acc, rd
 
+    def FTrain(self, num_rounds = 10, local_epochs = 30, lr_g = 0.005, lr_d = 0.01, 
+                    epsilon = None, sensitive_level = 2, num_classes = 2, ratio_gd = 3,
+                    lambda_d = 0.2, init_epochs = 100):
+            # set seed
+            np.random.seed(self.seed)
+            random.seed(self.seed)
+            torch.manual_seed(self.seed)
+
+            # discriminator: estimate the sensitive attribute
+            discriminator = logReg(num_classes, sensitive_level)
+
+            # Training
+            train_loss, train_accuracy = [], []
+            start_time = time.time()
+            
+            for round_ in tqdm(range(num_rounds)):
+                local_weights_g, local_weights_d, local_losses = [], [], []
+                if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
+
+                self.model.train()
+                m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
+                idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
+
+                for idx in idxs_users:
+                    local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
+                                batch_size = self.batch_size, option = "ftrain", seed = self.seed, prn = self.train_prn)
+
+                    w_g, w_d, loss = local_client.ftrain_update(
+                                    generator = copy.deepcopy(self.model), discriminator = discriminator, global_round=round_, 
+                                        lr_g = lr_g, lr_d = lr_d, local_epochs = local_epochs, ratio_gd = ratio_gd, 
+                                        lambda_d = lambda_d, init_epochs = init_epochs)
+                    local_weights_g.append(copy.deepcopy(w_g))
+                    local_weights_d.append(copy.deepcopy(w_d))
+                    local_losses.append(copy.deepcopy(loss))
+
+                # update global weights
+                weights_g = average_weights(local_weights_g, self.clients_idx, idxs_users)
+                weights_d = average_weights(local_weights_d, self.clients_idx, idxs_users)
+                self.model.load_state_dict(weights_g)
+                discriminator.load_state_dict(weights_d)
+
+                loss_avg = sum(local_losses) / len(local_losses)
+                train_loss.append(loss_avg)
+
+                # Calculate avg training accuracy over all clients at every round
+                list_acc = []
+                # the number of samples which are assigned to class y and belong to the sensitive group z
+                n_eyz = {}
+                for y in [0,1]:
+                    for z in [0,1]:
+                        for e in [0,1]:
+                            n_eyz[(e,y,z)] = 0
+
+                self.model.eval()
+                for c in range(m):
+                    local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
+                                batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn)
+                    # validation dataset inference
+                    acc, n_eyz_c, acc_loss, adv_loss = local_client.al_inference(self.model, discriminator) 
+                    list_acc.append(acc)
+                    
+                    for eyz in n_eyz:
+                        n_eyz[eyz] += n_eyz_c[eyz]
+                        
+                    if self.prn: 
+                        print("Client %d: predictor loss: %.2f | adversary loss %.2f | %s = %.2f" % (
+                                c+1, acc_loss, adv_loss, self.metric, self.disparity(n_eyz_c)))
+
+                train_accuracy.append(sum(list_acc)/len(list_acc))
+
+                # print global training loss after every 'i' rounds
+                if self.prn:
+                    if (round_+1) % self.print_every == 0:
+                        print(f' \nAvg Training Stats after {round_+1} global rounds:')
+                        print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation %s: %.4f" % (
+                            np.mean(np.array(train_loss)), 
+                            100*train_accuracy[-1], self.metric, self.disparity(n_eyz)))
+
+                if epsilon: 
+                    if self.disparity(n_eyz) < epsilon and train_accuracy[-1] > 0.5: break
+
+                # if adaptive_lr: learning_rate = self.disparity(n_yz_c)/100
+
+            # Test inference after completion of training
+            test_acc, n_yz= self.test_inference()
+            rd = self.disparity(n_yz)
+
+            if self.prn:
+                print(f' \n Results after {num_rounds} global rounds of training:')
+                print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
+                print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
+
+                # Compute fairness metric
+                print("|---- Test "+ self.metric+": {:.4f}".format(rd))
+
+                print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
+
+            if self.ret: return test_acc, rd
+
     def test_inference(self, model = None, test_dataset = None):
 
         """ 
