@@ -29,9 +29,9 @@ class Client(object):
         self.idxs = idxs
         self.option = option
         self.prn = prn
+        self.Z = Z
         self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, lbd)
         self.penalty = penalty
-        self.Z = Z
 
     def train_val(self, dataset, idxs, batch_size, lbd):
         """
@@ -47,7 +47,7 @@ class Client(object):
         if self.option == "FairBatch": 
             # FairBatch(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0)
             sampler = FairBatch(DatasetSplit(dataset, idxs_train), lbd, idxs,
-                                 batch_size = batch_size, replacement = False, seed = self.seed)
+                                 batch_size = batch_size, replacement = False, seed = self.seed, Z = self.Z)
             trainloader = DataLoader(DatasetSplit(dataset, idxs_train), sampler = sampler,
                                      batch_size=batch_size, num_workers = 0)
                         

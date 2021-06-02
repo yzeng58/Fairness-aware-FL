@@ -9,7 +9,7 @@ class FairBatch(Sampler):
     This class is for implementing batch selection of FairBatch.
         
     """
-    def __init__(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0):
+    def __init__(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0, Z = 2):
         """Initializes FairBatch."""
 
         self.batch_size = batch_size
@@ -17,12 +17,13 @@ class FairBatch(Sampler):
         self.batch_num = int(self.N / self.batch_size)
         self.lbd = lbd
         self.seed = seed
+        self.Z = Z
         
         self.yz_index, self.yz_size = {}, {}
         
-        for y, z in itertools.product([0,1], [0,1]):
-                self.yz_index[(y,z)] = np.where((train_dataset.y == y) & (train_dataset.sen == z))[0]
-                self.yz_size[(y,z)] = len(self.yz_index[(y,z)]) / self.N * self.batch_size
+        for y, z in itertools.product([0,1], list(range(self.Z))):
+            self.yz_index[(y,z)] = np.where((train_dataset.y == y) & (train_dataset.sen == z))[0]
+            self.yz_size[(y,z)] = len(self.yz_index[(y,z)]) / self.N * self.batch_size
         
 
     def select_batch_replacement(self, batch_size, full_index, batch_num, replacement = False):
@@ -72,18 +73,19 @@ class FairBatch(Sampler):
         random.seed(self.seed)
 
         # Get the indices for each class
-        sort_index_y_1_z_1 = self.select_batch_replacement(int(self.lbd[(1,1)] * (self.yz_size[(1,1)] + self.yz_size[(1,0)])), self.yz_index[(1,1)], self.batch_num)
-        sort_index_y_0_z_1 = self.select_batch_replacement(int(self.lbd[(0,1)] * (self.yz_size[(0,1)] + self.yz_size[(0,0)])), self.yz_index[(0,1)], self.batch_num)
-        sort_index_y_1_z_0 = self.select_batch_replacement(int(self.lbd[(1,0)] * (self.yz_size[(1,1)] + self.yz_size[(1,0)])), self.yz_index[(1,0)], self.batch_num)
-        sort_index_y_0_z_0 = self.select_batch_replacement(int(self.lbd[(0,0)] * (self.yz_size[(0,1)] + self.yz_size[(0,0)])), self.yz_index[(0,0)], self.batch_num)
-            
+        sort_index_yz = {}
+
+        for y in [0,1]:
+            for z in range(self.Z):
+                sort_index_yz[(y,z)] = self.select_batch_replacement(int(self.lbd[(y,z)] * sum([self.yz_size[(1,z)] for z in range(self.Z)])), self.yz_index[(y,z)], self.batch_num)
 
         for i in range(self.batch_num):
-            key_in_fairbatch = sort_index_y_0_z_0[i].copy()
-            key_in_fairbatch = np.hstack((key_in_fairbatch, sort_index_y_1_z_0[i].copy()))
-            key_in_fairbatch = np.hstack((key_in_fairbatch, sort_index_y_0_z_1[i].copy()))
-            key_in_fairbatch = np.hstack((key_in_fairbatch, sort_index_y_1_z_1[i].copy()))
-
+            key_in_fairbatch = sort_index_yz[(0,0)][i].copy()
+            for y in [0,1]:
+                for z in range(self.Z):
+                    if not (y == 0 and z == 0):
+                        key_in_fairbatch = np.hstack((key_in_fairbatch, sort_index_yz[(y,z)][i].copy()))
+            
             random.shuffle(key_in_fairbatch)
             for idx in key_in_fairbatch:
                 yield idx
