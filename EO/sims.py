@@ -7,7 +7,8 @@ import time
 def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 5, 
           local_epochs = 40, alpha = 1, option = "FairBatch",
           optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
-          adjusting_alpha = 0.7, epsilon = 0.02, test_lr = 0.01, test_rounds = 3, test_penalty = 10):
+          adjusting_alpha = 0.7, epsilon = 0.02, test_lr = 0.01, test_rounds = 3, test_penalty = 10, 
+          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, adaptive_lr = True, lambda_d = 0.8):
     """
     Run simulations.
     """
@@ -46,6 +47,15 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         elif option == 'fairness constraint':
             test_acc_i, rd_i = server.FairConstraints(test_rounds = test_rounds, test_lr = test_lr, num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, penalty = penalty, test_penalty = test_penalty)
+
+        elif option == 'ftrain':
+            test_acc_i, rd_i = server.FTrain(num_rounds = num_rounds, local_epochs = local_epochs, init_epochs = init_epochs, 
+                lr_g = lr_g, lr_d = lr_d, lambda_d = lambda_d)
+        
+        elif option == 'adversarial learning':
+            server.Unconstrained(num_rounds = 1, local_epochs = local_epochs, learning_rate = 0.01, optimizer = 'adam')
+            test_acc_i, rd_i = server.AdversarialLearning(num_rounds = num_rounds-1, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, epsilon = epsilon, alpha = alpha, adaptive_lr = adaptive_lr)
 
         else:
             print('Approach %s is not supported!' % option)
