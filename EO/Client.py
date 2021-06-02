@@ -7,9 +7,7 @@ sys.path.insert(0, '..')
 import numpy as np
 
 import torch
-from tqdm import tqdm
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from utils import *
 from fairBatch import *
 import torch.nn.functional as F
@@ -102,7 +100,7 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
-    def threshold_adjusting(self, model, global_round, learning_rate, local_epochs, optimizer): 
+    def threshold_adjusting(self, model, learning_rate, local_epochs, optimizer): 
         # Set mode to train model
         model.train()
 
@@ -139,7 +137,7 @@ class Client(object):
                 loss.backward()
                 # get the gradient of the bias
                 bias_grad += model.linear.bias.grad
-                # paarameter update
+                # parameter update
                 optimizer.step()
         # weight, loss
         return model.state_dict(), bias_grad

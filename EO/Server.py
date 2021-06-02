@@ -1,12 +1,13 @@
 # Server for equal opportunity
 
-import torch, copy, time, random, warnings, sys
+import torch, copy, time, random, sys
 
 import numpy as np
 
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+from collections import defaultdict
 
 from Client import *
 
@@ -637,11 +638,11 @@ class Server(object):
                 if epsilon: 
                     if self.disparity(n_eyz) < epsilon and train_accuracy[-1] > 0.5: break
 
-                # if adaptive_lr: learning_rate = self.disparity(n_yz_c)/100
+                # if adaptive_lr: learning_rate = self.disparity(n_eyz_c)/100
 
             # Test inference after completion of training
-            test_acc, n_yz= self.test_inference()
-            rd = self.disparity(n_yz)
+            test_acc, n_eyz= self.test_inference()
+            rd = self.disparity(n_eyz)
 
             if self.prn:
                 print(f' \n Results after {num_rounds} global rounds of training:')
@@ -713,15 +714,15 @@ class Server(object):
                 local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
                             batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn)
                 # validation dataset inference
-                acc, n_yz_c, acc_loss, adv_loss = local_client.al_inference(self.model, adv_model) 
+                acc, n_eyz_c, acc_loss, adv_loss = local_client.al_inference(self.model, adv_model) 
                 list_acc.append(acc)
                 
                 for eyz in n_eyz:
-                    n_eyz[eyz] += n_yz_c[eyz]
+                    n_eyz[eyz] += n_eyz_c[eyz]
                     
                 if self.prn: 
                     print("Client %d: predictor loss: %.2f | adversary loss %.2f | %s = %.2f" % (
-                            c+1, acc_loss, adv_loss, self.metric, self.disparity(n_yz_c)))
+                            c+1, acc_loss, adv_loss, self.metric, self.disparity(n_eyz_c)))
 
             train_accuracy.append(sum(list_acc)/len(list_acc))
 
@@ -736,7 +737,7 @@ class Server(object):
             if epsilon: 
                 if self.disparity(n_eyz) < epsilon and train_accuracy[-1] > 0.5: break
 
-            if adaptive_lr: learning_rate = self.disparity(n_yz_c)/100
+            if adaptive_lr: learning_rate = self.disparity(n_eyz_c)/100
 
         # Test inference after completion of training
         test_acc, n_eyz= self.test_inference()
@@ -747,6 +748,115 @@ class Server(object):
             print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
             print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
 
+            # Compute fairness metric
+            print("|---- Test "+ self.metric+": {:.4f}".format(rd))
+
+            print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
+
+        if self.ret: return test_acc, rd
+
+    # post-processing approach
+    def ThresholdAdjust(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, 
+                        epsilon = None):
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        start_time = time.time()
+        models = [copy.deepcopy(self.model) for _ in range(self.Z)]
+        bias_grad, w = [None for _ in range(self.Z)], [None for _ in range(self.Z)]
+        clients_idx_sen = defaultdict(list)
+        
+
+        for c in range(self.num_clients):
+            for sen in range(self.Z):
+                clients_idx_sen[sen].append(self.clients_idx[c][self.train_dataset.sen[self.clients_idx[c]] == sen])
+        
+        _, n_eyz = self.test_inference()
+        for round_ in tqdm(range(num_rounds)):
+            eod = EODisparity(n_eyz, True)
+            if self.disparity(n_eyz) <= epsilon: break
+            
+            min_z, max_z = np.argmin(eod), np.argmax(eod)
+            update_step = {min_z:1, max_z:-1}
+            update_z = [min_z, max_z]
+            local_weights = [[],[]]
+
+            for c in range(self.num_clients):
+                for sen in [min_z, max_z]:
+                    local_model = Client(dataset=self.train_dataset,
+                                                idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
+                                            option = "threshold adjusting",  
+                                            seed = self.seed, prn = self.train_prn)
+
+                    w[sen], bias_grad[sen] = local_model.threshold_adjusting(
+                                    model=copy.deepcopy(models[sen]), 
+                                        learning_rate = 0.005, local_epochs = local_epochs, 
+                                        optimizer = 'adam')
+                
+                update_idx = 0 if bias_grad[update_z[0]][1] < bias_grad[update_z[1]][1] else 1
+                w[update_z[update_idx]]['linear.bias'][1] += learning_rate * update_step[update_z[update_idx]] / (round_ + 1) ** .5
+                w[update_z[update_idx]]['linear.bias'][0] -= learning_rate * update_step[update_z[update_idx]] / (round_ + 1) ** .5
+                local_weights[update_idx].append(copy.deepcopy(w[update_z[update_idx]]))
+                local_weights[1-update_idx].append(copy.deepcopy(models[update_z[1-update_idx]].state_dict()))
+            # update global weights
+            if len(local_weights[0]): models[update_z[0]].load_state_dict(average_weights(local_weights[0], clients_idx_sen[update_z[0]], range(self.num_clients)))
+            if len(local_weights[1]): models[update_z[1]].load_state_dict(average_weights(local_weights[1], clients_idx_sen[update_z[1]], range(self.num_clients)))
+
+            n_eyz = {}
+            for y in [0,1]:
+                for z in [0,1]:
+                    for e in [0,1]:
+                        n_eyz[(e,y,z)] = 0
+
+            train_loss, train_acc = [], []
+            for c in range(self.num_clients):
+                for sen in [0,1]:
+                    local_model = Client(dataset=self.train_dataset,
+                                                idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
+                                            option = "threshold adjusting",  
+                                            seed = self.seed, prn = self.train_prn)
+                    acc, loss, n_eyz_c, _, _, _ = local_model.inference(model = models[sen])
+                    train_loss.append(loss)
+                    train_acc.append(acc)
+
+                    for eyz in n_eyz:
+                        n_eyz[eyz] += n_eyz_c[eyz]            
+
+            if self.prn:
+                if (round_+1) % self.print_every == 0:
+                    print(f' \nAvg Training Stats after {round_+1} threshold adjusting global rounds:')
+                    print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation %s: %.4f" % (
+                        np.mean(np.array(train_loss)), 
+                        100*np.array(train_acc).mean(), self.metric, self.disparity(n_eyz)))
+                
+            if epsilon: 
+                if self.disparity(n_eyz) < epsilon: break
+  
+        # Test inference after completion of training
+        n_eyz = {}
+        for y in [0,1]:
+            for z in [0,1]:
+                for e in [0,1]:
+                    n_eyz[(e,y,z)] = 0
+
+        idx, test_acc_list = [], []
+        for z in range(self.Z):
+            idx.append(np.where(self.test_dataset.sen == z)[0].tolist())
+            test_acc_, n_eyz_ = self.test_inference(models[z], DatasetSplit(self.test_dataset, idx[z]))
+            test_acc_list.append(test_acc_)
+            for e in [0,1]:
+                for y in [0,1]:
+                    n_eyz[(e,y,z)] = n_eyz_[(e,y,z)]
+        
+        test_acc = sum([test_acc_list[z] * len(idx[z]) for z in range(self.Z)]) / sum([len(idx[z]) for z in range(self.Z)])
+
+        rd = self.disparity(n_eyz)
+
+        if self.prn:
+            print(f' \n Results after {num_rounds} global rounds of training:')
+            print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
             # Compute fairness metric
             print("|---- Test "+ self.metric+": {:.4f}".format(rd))
 
