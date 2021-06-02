@@ -971,13 +971,17 @@ class Server(object):
         train_loss, train_accuracy = [], []
         start_time = time.time()
         weights = self.model.state_dict()
-        w0_z = [1, 1]
-        w_yz = {(0,0): 1, (0,1): 1, (1,0): 1, (1,1): 1}
-        p, delta, lbd = [0,0], [0,0], [0,0]
-        n_yz, n_yz_c = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}, []
+        w0_z = torch.ones(self.Z)
+        p, delta, lbd = torch.zeros(self.Z), torch.zeros(self.Z), torch.zeros(self.Z)
+        w_yz, n_yz, n_yz_c = {}, {}, []
+        for y in [0,1]:
+            for z in range(self.Z):
+                n_yz[(y,z)] = 0
+                w_yz[(y,z)] = 1
+
         for c in range(self.num_clients):
             n_yz_c.append(Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
-                            batch_size = self.batch_size, option = "prebc").get_n_yz(), Z = self.Z)
+                            batch_size = self.batch_size, option = "prebc", Z = self.Z).get_n_yz())
             for yz in n_yz_c[c]:
                 n_yz[yz] = n_yz[yz] + n_yz_c[c][yz]
         nw_yz = copy.deepcopy(n_yz)
@@ -985,23 +989,30 @@ class Server(object):
         for round_ in range(pre_rounds):
             for yz in n_yz:
                 nw_yz[yz] = n_yz[yz] * w_yz[yz]
-            p[0] = w_yz[(1,0)] * nw_yz[(1,0)] / (w_yz[(1,0)] * nw_yz[(1,0)] + w_yz[(0,0)] * nw_yz[(0,0)])
-            p[1] = w_yz[(1,1)] * nw_yz[(1,1)] / (w_yz[(1,1)] * nw_yz[(1,1)] + w_yz[(0,1)] * nw_yz[(0,1)])
-            nw0, nw1, nw = nw_yz[(1,0)] + nw_yz[(0,0)], nw_yz[(1,1)] + nw_yz[(0,1)], nw_yz[(1,0)] + nw_yz[(0,0)] + nw_yz[(1,1)] + nw_yz[(0,1)]
-            delta[0] = p[0] * (1 - nw0/nw) - nw1/nw * p[1]
-            delta[1] = p[1] * (1 - nw1/nw) - nw0/nw * p[0]
-            print(delta)
-            lbd[0] = - alpha * delta[0]
-            lbd[1] = - alpha * delta[1]
-            for z in [0,1]: w0_z[z] = w0_z[z] * np.exp(lbd[z])
+            for z in range(self.Z):
+                p[z] = w_yz[(1,z)] * nw_yz[(1,z)] / (w_yz[(1,z)] * nw_yz[(1,z)] + w_yz[(0,z)] * nw_yz[(0,z)])
+            nwz, nw = [], 0
+            for z in range(self.Z):
+                nwz.append(nw_yz[(1,z)] + nw_yz[(0,z)])
+                nw += nwz[-1]
+
+            for z in range(self.Z):
+                delta[z] = p[z] * (1 - nwz[z]/nw)
+                for z_ in range(self.Z):
+                    if z_ != z:
+                        delta[z] += -nwz[z_]/nw * p[z_]
+
+            for z in range(self.Z):
+                lbd[z] = - alpha * delta[z]
+
+            for z in range(self.Z): w0_z[z] = w0_z[z] * np.exp(lbd[z])
             for yz in w_yz:
                 if yz[0] == 1: 
                     w_yz[yz] = w0_z[yz[1]] / (w0_z[yz[1]] + 1)
                 else:
                     w_yz[yz] = 1 / (w0_z[yz[1]] + 1)
 
-        mu = torch.tensor(w0_z).type(torch.DoubleTensor)
-        print(mu)
+        mu = w0_z.clone().detach().type(torch.DoubleTensor)
         nc = []
         for c in range(self.num_clients):
             nc.append(0)
@@ -1041,7 +1052,11 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
+
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 

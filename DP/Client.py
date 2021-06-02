@@ -607,7 +607,10 @@ class Client(object):
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
         x = x.to(DEVICE)
 
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        n_yz = {}
+        for y_ in [0,1]:
+            for z_ in range(self.Z):
+                n_yz[(y_,z_)] = 0
         for y_, z_ in n_yz:
             n_yz[(y_,z_)] = torch.sum((y == y_) & (z == z_)).item()
 
