@@ -1,3 +1,4 @@
+# simulations for demographic parity
 # import the training method 
 from Server import *
 

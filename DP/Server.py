@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+from collections import defaultdict
 
 from Client import *
 
@@ -20,8 +21,8 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 class Server(object):
     def __init__(self, model, dataset_info, seed = 123, num_workers = 4, ret = False, 
-                train_prn = False, metric = "Risk Difference", 
-                batch_size = 128, print_every = 1, fraction_clients = 1):
+                train_prn = False, metric = "Demographic disparity", 
+                batch_size = 128, print_every = 1, fraction_clients = 1, Z = 2):
         """
         Server execution.
 
@@ -68,9 +69,9 @@ class Server(object):
         elif metric == "Demographic disparity":
             self.disparity = DPDisparity
         else:
-            warnings.warn("Warning message: metric " + metric + " is not supported! Use the default metric risk difference. ")
-            self.disparity = riskDifference
-            self.metric = "Risk Difference"
+            warnings.warn("Warning message: metric " + metric + " is not supported! Use the default metric Demographic disparity. ")
+            self.disparity = DPDisparity
+            self.metric = "Demographic disparity"
 
         self.batch_size = batch_size
         self.print_every = print_every
@@ -78,6 +79,7 @@ class Server(object):
 
         self.train_dataset, self.test_dataset, self.clients_idx = dataset_info
         self.num_clients = len(self.clients_idx)
+        self.Z = Z
 
     def Unconstrained(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, 
                     optimizer = "adam", epsilon = None):
@@ -174,43 +176,42 @@ class Server(object):
         torch.manual_seed(self.seed)
 
         start_time = time.time()
-        models = [copy.deepcopy(self.model), copy.deepcopy(self.model)]
-        bias_grad, w = [0,0], [0,0]
-        clients_idx_sen = {0:[], 1:[]}
+        models = [copy.deepcopy(self.model) for _ in range(self.Z)]
+        w = [[None for _ in range(self.num_clients)] for _ in range(2)]
+        clients_idx_sen = defaultdict(list)
 
         for c in range(self.num_clients):
-            for sen in [0,1]:
+            for sen in range(self.Z):
                 clients_idx_sen[sen].append(self.clients_idx[c][self.train_dataset.sen[self.clients_idx[c]] == sen])
         
         _, n_yz = self.test_inference()
         for round_ in tqdm(range(num_rounds)):
-            rd = riskDifference(n_yz, False)
+            dpd = DPDisparity(n_yz, True)
             if self.disparity(n_yz) <= epsilon: break
-            update_step = {0:1, 1:-1} if rd > 0 else {0:-1, 1:1}
-
-            local_weights = [[],[]]
+            
+            min_z, max_z = np.argmin(dpd), np.argmax(dpd)
+            update_step = {min_z:1, max_z:-1}
+            update_z = [min_z, max_z]
 
             for c in range(self.num_clients):
-                for sen in [0,1]:
-                    local_model = Client(dataset=self.train_dataset,
-                                                idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
-                                            option = "threshold adjusting",  
-                                            seed = self.seed, prn = self.train_prn)
-                    w[sen], bias_grad[sen] = local_model.threshold_adjusting(
-                                    model=copy.deepcopy(models[sen]), global_round=round_, 
-                                        learning_rate = 0.005, local_epochs = local_epochs, 
-                                        optimizer = 'adam')
-                
-                update_sen = 0 if bias_grad[0][1] < bias_grad[1][1] else 1
-                w[update_sen]['linear.bias'][1] += learning_rate * update_step[update_sen]
-                w[update_sen]['linear.bias'][0] -= learning_rate * update_step[update_sen]
-                local_weights[update_sen].append(copy.deepcopy(w[update_sen]))
-                local_weights[1-update_sen].append(copy.deepcopy(models[1-update_sen].state_dict()))
-            # update global weights
-            if len(local_weights[0]): models[0].load_state_dict(average_weights(local_weights[0], clients_idx_sen[0], range(self.num_clients)))
-            if len(local_weights[1]): models[1].load_state_dict(average_weights(local_weights[1], clients_idx_sen[1], range(self.num_clients)))
+                local_model = Client(dataset=self.train_dataset,
+                                            idxs=np.concatenate((clients_idx_sen[min_z][c], clients_idx_sen[max_z][c]), axis = None), batch_size = self.batch_size, 
+                                        option = "threshold adjusting",  
+                                        seed = self.seed, prn = self.train_prn)
 
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+                w[0][c], w[1][c] = local_model.threshold_adjusting(
+                                models=copy.deepcopy(models), 
+                                    learning_rate = learning_rate, local_epochs = local_epochs, 
+                                    optimizer = 'adam', update_step = update_step)
+                
+            # update global weights
+            models[min_z].load_state_dict(average_weights(w[0], clients_idx_sen[update_z[0]], range(self.num_clients)))
+            models[max_z].load_state_dict(average_weights(w[1], clients_idx_sen[update_z[1]], range(self.num_clients)))
+
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
 
             train_loss, train_acc = [], []
             for c in range(self.num_clients):
@@ -237,16 +238,20 @@ class Server(object):
                 if self.disparity(n_yz) < epsilon: break
   
         # Test inference after completion of training
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-        idx_0 = np.where(self.test_dataset.sen == 0)[0].tolist()
-        idx_1 = np.where(self.test_dataset.sen == 1)[0].tolist()
-        test_acc_0, n_yz_0  = self.test_inference(models[0], DatasetSplit(self.test_dataset, idx_0))
-        test_acc_1, n_yz_1 = self.test_inference(models[1], DatasetSplit(self.test_dataset, idx_1))
-        
-        for yz in n_yz:
-            n_yz[yz] = n_yz_0[yz] + n_yz_1[yz]
+        n_yz = {}
+        for y in [0,1]:
+            for z in range(self.Z):
+                n_yz[(y,z)] = 0
 
-        test_acc = (test_acc_0 * len(idx_0) + test_acc_1 * len(idx_1)) / (len(idx_0) + len(idx_1))
+        idx, test_acc_list = [], []
+        for z in range(self.Z):
+            idx.append(np.where(self.test_dataset.sen == z)[0].tolist())
+            test_acc_, n_yz_ = self.test_inference(models[z], DatasetSplit(self.test_dataset, idx[z]))
+            test_acc_list.append(test_acc_)
+            for y in [0,1]:
+                n_yz[(y,z)] = n_yz_[(y,z)]
+        
+        test_acc = sum([test_acc_list[z] * len(idx[z]) for z in range(self.Z)]) / sum([len(idx[z]) for z in range(self.Z)])
         rd = self.disparity(n_yz)
 
         if self.prn:
@@ -1270,6 +1275,7 @@ class Server(object):
         if self.ret: return test_acc, rd    
 
     def FBVariant1(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
+        # new algorithm for demographic parity, add weights directly, signed gradient-based algorithm
         # set seed
         np.random.seed(self.seed)
         random.seed(self.seed)
@@ -1497,6 +1503,7 @@ class Server(object):
         if self.ret: return test_acc, rd  
 
     def FBVariant2(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 1, alpha_decay = 0.5):
+        # new algorithm for demographic parity, draw minibatches
         # set seed
         np.random.seed(self.seed)
         random.seed(self.seed)
