@@ -115,7 +115,7 @@ class Server(object):
             # the number of samples which are assigned to class y and belong to the sensitive group z
             n_eyz = {}
             for y in [0,1]:
-                for z in [0,1]:
+                for z in range(self.Z):
                     for e in [0,1]:
                         n_eyz[(e,y,z)] = 0
 
@@ -606,7 +606,7 @@ class Server(object):
                 # the number of samples which are assigned to class y and belong to the sensitive group z
                 n_eyz = {}
                 for y in [0,1]:
-                    for z in [0,1]:
+                    for z in range(self.Z):
                         for e in [0,1]:
                             n_eyz[(e,y,z)] = 0
 
@@ -705,7 +705,7 @@ class Server(object):
             # the number of samples which are assigned to class y and belong to the sensitive group z
             n_eyz = {}
             for y in [0,1]:
-                for z in [0,1]:
+                for z in range(self.Z):
                     for e in [0,1]:
                         n_eyz[(e,y,z)] = 0
 
@@ -799,7 +799,7 @@ class Server(object):
 
             n_eyz = {}
             for y in [0,1]:
-                for z in [0,1]:
+                for z in range(self.Z):
                     for e in [0,1]:
                         n_eyz[(e,y,z)] = 0
 
@@ -830,7 +830,7 @@ class Server(object):
         # Test inference after completion of training
         n_eyz = {}
         for y in [0,1]:
-            for z in [0,1]:
+            for z in range(self.Z):
                 for e in [0,1]:
                     n_eyz[(e,y,z)] = 0
 
@@ -874,7 +874,7 @@ class Server(object):
         total, correct = 0.0, 0.0
         n_eyz = {}
         for y in [0,1]:
-            for z in [0,1]:
+            for z in range(self.Z):
                 for e in [0,1]:
                     n_eyz[(e,y,z)] = 0
         
