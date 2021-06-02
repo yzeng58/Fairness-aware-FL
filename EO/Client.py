@@ -100,9 +100,11 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
-    def threshold_adjusting(self, model, learning_rate, local_epochs, optimizer): 
+    def threshold_adjusting(self, models, learning_rate, local_epochs, optimizer, update_step): 
+        z = list(update_step.keys())
         # Set mode to train model
-        model.train()
+        models[z[0]].train()
+        models[z[1]].train()
 
         # set seed
         np.random.seed(self.seed)
@@ -111,16 +113,19 @@ class Client(object):
 
         # Set optimizer for the local updates
         if optimizer == 'sgd':
-            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
-                                        ) # momentum=0.5
+            optimizer = [torch.optim.SGD(models[z[0]].parameters(), lr=0.005) ,
+                        torch.optim.SGD(models[z[1]].parameters(), lr=0.005)] 
         elif optimizer == 'adam':
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                        weight_decay=1e-4)
+            optimizer = [torch.optim.Adam(models[z[0]].parameters(), lr=0.005, weight_decay=1e-4),
+                        torch.optim.Adam(models[z[1]].parameters(), lr=0.005, weight_decay=1e-4)]
         bias_grad = 0
-        for _ in range(local_epochs):
+        for epoch in range(local_epochs):
             # only update the bias
-            param = next(model.parameters())
-            param.requires_grad = False
+            param0 = next(models[z[0]].parameters())
+            param0.requires_grad = False
+
+            param1 = next(models[z[1]].parameters())
+            param1.requires_grad = False
 
             for _, (features, labels, sensitive) in enumerate(self.trainloader):
                 features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
@@ -129,18 +134,26 @@ class Client(object):
                 # because PyTorch accumulates the gradients on subsequent backward passes. 
                 # This is convenient while training RNNs
                 
-                probas, logits = model(features)
-                loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive)
-                    
-                optimizer.zero_grad()
-                # compute the gradients
-                loss.backward()
-                # get the gradient of the bias
-                bias_grad += model.linear.bias.grad
-                # parameter update
-                optimizer.step()
+                group_idx, loss, bias_grad, w = [], [0,0], [0,0], []
+                for i in [0,1]:
+                    w.append(copy.deepcopy(models[z[i]]).state_dict())
+                    group_idx.append(torch.where(sensitive == z[i]))
+
+                    probas, logits = models[z[i]](features[group_idx[i]])
+                    loss[i], _, _ = loss_func(self.option, logits, labels[group_idx[i]], probas, sensitive[group_idx[i]])
+                    optimizer[i].zero_grad()
+                    # compute the gradients
+                    loss[i].backward()
+                    # get the gradient of the bias
+                    bias_grad[i] = models[z[0]].linear.bias.grad[1]
+
+                update_idx = np.argmin(bias_grad)
+                w[update_idx]['linear.bias'][1] += learning_rate * update_step[z[update_idx]] / (epoch + 1) ** .5
+                w[update_idx]['linear.bias'][0] -= learning_rate * update_step[z[update_idx]] / (epoch + 1) ** .5
+                models[z[update_idx]].load_state_dict(w[update_idx])
         # weight, loss
-        return model.state_dict(), bias_grad
+        # print(models[z[0]].state_dict(), models[z[1]].state_dict())
+        return models[z[0]].state_dict(), models[z[1]].state_dict()
 
     def bc_update(self, model, mu, global_round, learning_rate, local_epochs, optimizer):
         # Set mode to train model

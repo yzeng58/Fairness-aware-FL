@@ -765,7 +765,7 @@ class Server(object):
 
         start_time = time.time()
         models = [copy.deepcopy(self.model) for _ in range(self.Z)]
-        bias_grad, w = [None for _ in range(self.Z)], [None for _ in range(self.Z)]
+        w = [[None for _ in range(self.num_clients)] for _ in range(2)]
         clients_idx_sen = defaultdict(list)
         
 
@@ -781,28 +781,21 @@ class Server(object):
             min_z, max_z = np.argmin(eod), np.argmax(eod)
             update_step = {min_z:1, max_z:-1}
             update_z = [min_z, max_z]
-            local_weights = [[],[]]
 
             for c in range(self.num_clients):
-                for sen in [min_z, max_z]:
-                    local_model = Client(dataset=self.train_dataset,
-                                                idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
-                                            option = "threshold adjusting",  
-                                            seed = self.seed, prn = self.train_prn)
+                local_model = Client(dataset=self.train_dataset,
+                                            idxs=np.concatenate((clients_idx_sen[min_z][c], clients_idx_sen[max_z][c]), axis = None), batch_size = self.batch_size, 
+                                        option = "threshold adjusting",  
+                                        seed = self.seed, prn = self.train_prn)
 
-                    w[sen], bias_grad[sen] = local_model.threshold_adjusting(
-                                    model=copy.deepcopy(models[sen]), 
-                                        learning_rate = 0.005, local_epochs = local_epochs, 
-                                        optimizer = 'adam')
+                w[0][c], w[1][c] = local_model.threshold_adjusting(
+                                models=copy.deepcopy(models), 
+                                    learning_rate = learning_rate, local_epochs = local_epochs, 
+                                    optimizer = 'adam', update_step = update_step)
                 
-                update_idx = 0 if bias_grad[update_z[0]][1] < bias_grad[update_z[1]][1] else 1
-                w[update_z[update_idx]]['linear.bias'][1] += learning_rate * update_step[update_z[update_idx]] / (round_ + 1) ** .5
-                w[update_z[update_idx]]['linear.bias'][0] -= learning_rate * update_step[update_z[update_idx]] / (round_ + 1) ** .5
-                local_weights[update_idx].append(copy.deepcopy(w[update_z[update_idx]]))
-                local_weights[1-update_idx].append(copy.deepcopy(models[update_z[1-update_idx]].state_dict()))
             # update global weights
-            if len(local_weights[0]): models[update_z[0]].load_state_dict(average_weights(local_weights[0], clients_idx_sen[update_z[0]], range(self.num_clients)))
-            if len(local_weights[1]): models[update_z[1]].load_state_dict(average_weights(local_weights[1], clients_idx_sen[update_z[1]], range(self.num_clients)))
+            models[min_z].load_state_dict(average_weights(w[0], clients_idx_sen[update_z[0]], range(self.num_clients)))
+            models[max_z].load_state_dict(average_weights(w[1], clients_idx_sen[update_z[1]], range(self.num_clients)))
 
             n_eyz = {}
             for y in [0,1]:
