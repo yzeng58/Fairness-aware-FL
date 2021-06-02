@@ -1112,13 +1112,13 @@ class Server(object):
         train_loss, train_accuracy = [], []
         start_time = time.time()
         weights = self.model.state_dict()
-        mu = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
+        mu = torch.zeros(self.Z).type(torch.DoubleTensor)
         
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses = [], []
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
             
-            n, nz, yz, yhat = 0, torch.tensor([0,0]), torch.tensor([0,0]), 0
+            n, nz, yz, yhat = 0, torch.zeros(self.Z), torch.zeros(self.Z), 0
             nc = []
             for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -1128,8 +1128,9 @@ class Server(object):
                 n, nz, yz, yhat = n + n_, nz + nz_, yz + yz_, yhat + yhat_
                 nc.append(n_)
 
-            delta = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
-            delta[0], delta[1] = yz[0]/nz[0] - yhat/n, yz[1]/nz[1] - yhat/n
+            delta = torch.zeros(self.Z).type(torch.DoubleTensor)
+            for z in range(self.Z):
+                delta[z] = yz[z]/nz[z] - yhat/n
             mu = mu - alpha * delta
 
             self.model.train()
@@ -1158,7 +1159,11 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
+
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -1203,6 +1208,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd        
 
+    # only support z == 2
     def BCVariant2(self, num_rounds = 1, local_epochs = 30, learning_rate = 0.005, bs_iter = 5, 
                     optimizer = "adam", epsilon = None, lbd_interval = [[-10, 10], [-10, 10]]):
         # set seed
@@ -1251,7 +1257,7 @@ class Server(object):
                 loss_avg = sum(local_losses) / len(local_losses)
                 train_loss.append(loss_avg)
 
-                n, nz, yz, yhat = 0, torch.tensor([0,0]), torch.tensor([0,0]), 0
+                n, nz, yz, yhat = 0, torch.zeros(self.Z), torch.zeros(self.Z), 0
                 nc = []
                 for c in range(self.num_clients):
                     local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -1261,8 +1267,9 @@ class Server(object):
                     n, nz, yz, yhat = n + n_, nz + nz_, yz + yz_, yhat + yhat_
                     nc.append(n_)
 
-                delta = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
-                delta[0], delta[1] = yz[0]/nz[0] - yhat/n, yz[1]/nz[1] - yhat/n
+                delta = torch.zeros(self.Z).type(torch.DoubleTensor)
+                for z in range(self.Z):
+                    delta[z] = yz[0] / nz[z] - yhat/n
 
                 for z in [0,1]:
                     if delta[z] <= 0:
@@ -1319,6 +1326,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd    
 
+    # only support z == 2
     def FBVariant1(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
         # new algorithm for demographic parity, add weights directly, signed gradient-based algorithm
         # set seed
@@ -1332,17 +1340,14 @@ class Server(object):
         weights = self.model.state_dict()
 
         # the number of samples whose label is y and sensitive attribute is z
-        m_yz = {(0,0): ((self.train_dataset.y == 0) & (self.train_dataset.sen == 0)).sum(),
-            (1,0): ((self.train_dataset.y == 1) & (self.train_dataset.sen == 0)).sum(),
-            (0,1): ((self.train_dataset.y == 0) & (self.train_dataset.sen == 1)).sum(),
-            (1,1): ((self.train_dataset.y == 1) & (self.train_dataset.sen == 1)).sum()}
+        m_yz, lbd = {}, {}
+        for y in [0,1]:
+            for z in range(self.Z):
+                m_yz[(y,z)] = ((self.train_dataset.y == y) & (self.train_dataset.sen == z)).sum()
 
-        lbd = {
-            (0,0): m_yz[(0,0)]/(m_yz[(1,0)] + m_yz[(0,0)]), 
-            (0,1): m_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)]),
-            (1,0): m_yz[(1,0)]/(m_yz[(1,0)] + m_yz[(0,0)]),
-            (1,1): m_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)]),
-        }
+        for y in [0,1]:
+            for z in range(self.Z):
+                lbd[(y,z)] = m_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
 
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses, nc = [], [], []
@@ -1376,8 +1381,12 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-            loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz, loss_yz = {}, {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
+                    loss_yz[(y,z)] = 0
+
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset,
@@ -1396,10 +1405,8 @@ class Server(object):
                 
             # update the lambda according to the paper -> see Section A.1 of FairBatch
             # works well! The real batch size would be slightly different from the setting
-            loss_yz[(0,0)] = loss_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
-            loss_yz[(1,0)] = loss_yz[(1,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
-            loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
-            loss_yz[(1,1)] = loss_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
+            for y, z in loss_yz:
+                loss_yz[(y,z)] = loss_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
 
             y0_diff = loss_yz[(0,0)] - loss_yz[(0,1)]
             y1_diff = loss_yz[(1,0)] - loss_yz[(1,1)]
@@ -1456,13 +1463,13 @@ class Server(object):
         train_loss, train_accuracy = [], []
         start_time = time.time()
         weights = self.model.state_dict()
-        mu = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
+        mu = torch.zeros(self.Z).type(torch.DoubleTensor)
         
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses = [], []
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
             
-            n, nz, yz, yhat = 0, torch.tensor([0,0]), torch.tensor([0,0]), 0
+            n, nz, yz, yhat = 0, torch.zeros(self.Z), torch.zeros(self.Z), 0
             nc = []
             for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -1472,8 +1479,9 @@ class Server(object):
                 n, nz, yz, yhat = n + n_, nz + nz_, yz + yz_, yhat + yhat_
                 nc.append(n_)
 
-            delta = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
-            delta[0], delta[1] = yz[0]/nz[0] - yhat/n, yz[1]/nz[1] - yhat/n
+            delta = torch.zeros(self.Z)
+            for z in range(self.Z):
+                delta[z] = yz[z]/nz[z] - yhat/n
             mu = mu - alpha * delta
 
             self.model.train()
@@ -1502,7 +1510,10 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 

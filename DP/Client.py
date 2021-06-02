@@ -299,24 +299,19 @@ class Client(object):
 
         probas, _ = model(x)
         _, pred_labels = torch.max(probas, 1)
-        prob = [0,0]
-        prob[0] = torch.sum((pred_labels == 1) & (z == 0)).item() / torch.sum(z == 0).item()
-        prob[1] = torch.sum((pred_labels == 1) & (z == 1)).item() / torch.sum(z == 1).item()
+        prob = torch.zeros(self.Z)
+        for z_ in range(self.Z): 
+            prob[z_] = torch.sum((pred_labels == 1) & (z == z_)).item() / torch.sum(z == z_).item()
 
         v = torch.ones(len(y)).type(torch.DoubleTensor)
 
-        n, nz, yz = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
-        # z_i = 0
-        z0_idx = torch.where(z == 0)[0]
-        yz[0] = (prob[0] * v[z0_idx]).sum().item()
-        nz[0] = v[z0_idx].sum().item()
-
-        # z_i = 1
-        z1_idx = torch.where(z == 1)[0]
-        yz[1] = (prob[1] * v[z1_idx]).sum().item()
-        nz[1] = v[z1_idx].sum().item()
-
-        yhat = yz[0] + yz[1]
+        n, nz, yz = v.sum().item(), torch.zeros(self.Z).type(torch.DoubleTensor), torch.zeros(self.Z).type(torch.DoubleTensor)
+        z_idx, yhat = [], 0
+        for z_ in range(self.Z): 
+            z_idx.append(torch.where(z == z_)[0])
+            yz[z_] = (prob[z_] * v[z_idx[z_]]).sum().item()
+            nz[z_] = v[z_idx[z_]].sum().item()
+            yhat += yz[z_]
         return n, nz, yz, yhat
 
     def mean_sensitive_stat(self): 
