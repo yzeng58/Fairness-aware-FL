@@ -531,7 +531,11 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
+
             self.model.eval()
             for c in range(m):
                 local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -589,13 +593,13 @@ class Server(object):
         train_loss, train_accuracy = [], []
         start_time = time.time()
         weights = self.model.state_dict()
-        mu = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
+        mu = torch.zeros(self.Z).type(torch.DoubleTensor)
         
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses = [], []
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
             
-            n, nz, yz, yhat = 0, torch.tensor([0,0]), torch.tensor([0,0]), 0
+            n, nz, yz, yhat = 0, torch.zeros(self.Z), torch.zeros(self.Z), 0
             nc = []
             for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -605,8 +609,9 @@ class Server(object):
                 n, nz, yz, yhat = n + n_, nz + nz_, yz + yz_, yhat + yhat_
                 nc.append(n_)
 
-            delta = torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
-            delta[0], delta[1] = yz[0]/nz[0] - yhat/n, yz[1]/nz[1] - yhat/n
+            delta = torch.zeros(self.Z)
+            for z in range(self.Z):
+                delta[z] = yz[z]/nz[z] - yhat/n
             mu = mu - alpha * delta
 
             self.model.train()
@@ -635,7 +640,11 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
+
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -739,7 +748,11 @@ class Server(object):
                 # Calculate avg training accuracy over all clients at every round
                 list_acc = []
                 # the number of samples which are assigned to class y and belong to the sensitive group z
-                n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+                n_yz = {}
+                for y in [0,1]:
+                    for z in range(self.Z):
+                        n_yz[(y,z)] = 0
+
                 self.model.eval()
                 for c in range(m):
                     local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c],
@@ -802,7 +815,11 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
+
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c],
@@ -858,7 +875,6 @@ class Server(object):
         # Training
         train_loss, train_accuracy = [], []
         start_time = time.time()
-        weights = self.model.state_dict()
         
         for round_ in tqdm(range(num_rounds)):
             local_weights_g, local_weights_d, local_losses = [], [], []
@@ -892,7 +908,11 @@ class Server(object):
             # Calculate avg training accuracy over all clients at every round
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+            n_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    n_yz[(y,z)] = 0
+
             self.model.eval()
             for c in range(m):
                 local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
@@ -939,7 +959,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd
 
-    # pre-processing
+    # pre-processing # discarded 
     def preBC(self, pre_rounds = 8, num_rounds = 2, local_epochs = 30, alpha = 0.01, learning_rate = 0.005, 
                     optimizer = "adam", epsilon = None):
         # set seed

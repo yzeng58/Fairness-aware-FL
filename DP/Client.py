@@ -225,16 +225,12 @@ class Client(object):
 
         v = torch.ones(len(y)).type(torch.DoubleTensor)
 
-        n, nz, yz, yhat = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), (probas * v).sum().item()
-        # z_i = 0
-        z0_idx = torch.where(z == 0)[0]
-        yz[0] = (probas[z0_idx] * v[z0_idx]).sum().item()
-        nz[0] = v[z0_idx].sum().item()
-
-        # z_i = 1
-        z1_idx = torch.where(z == 1)[0]
-        yz[1] = (probas[z1_idx] * v[z1_idx]).sum().item()
-        nz[1] = v[z1_idx].sum().item()
+        n, nz, yz, yhat = v.sum().item(), torch.zeros(self.Z).type(torch.DoubleTensor), torch.zeros(self.Z).type(torch.DoubleTensor), (probas * v).sum().item()
+        z_idx = []
+        for z_ in range(self.Z):
+            z_idx.append(torch.where(z_ == z)[0])
+            yz[z_] = (probas[z_idx[z_]] * v[z_idx[z_]]).sum().item()
+            nz[z_] = v[z_idx[z_]].sum().item()
 
         return n, nz, yz, yhat
 
@@ -459,7 +455,10 @@ class Client(object):
     def al_inference(self, model, adv_model):
         model.eval()
         total, correct, acc_loss, adv_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        n_yz = {}
+        for y in [0,1]:
+            for z in range(self.Z):
+                n_yz[(y,z)] = 0
         
         for _, (features, labels, sensitive) in enumerate(self.validloader):
             features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
