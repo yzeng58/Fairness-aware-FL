@@ -310,7 +310,7 @@ class Server(object):
             nc = []
             for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
-                            batch_size = self.batch_size, option = "bias correcting", seed = self.seed, prn = self.train_prn)
+                            batch_size = self.batch_size, option = "bias correcting", seed = self.seed, prn = self.train_prn, Z = self.Z)
                 delta_ = local_model.bc_compute(copy.deepcopy(self.model), px, pg)
                 delta += delta_
 
@@ -323,7 +323,7 @@ class Server(object):
 
             for idx in idxs_users:
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
-                            batch_size = self.batch_size, option = "bias correcting", seed = self.seed, prn = self.train_prn)
+                            batch_size = self.batch_size, option = "bias correcting", seed = self.seed, prn = self.train_prn, Z = self.Z)
 
                 w, loss, nc_ = local_model.bc_update(
                                 model=copy.deepcopy(self.model), mu = mu, global_round=round_, 
@@ -352,7 +352,7 @@ class Server(object):
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
-                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn)
+                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn, Z = self.Z)
                 # validation dataset inference
                 acc, loss, n_eyz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                 list_acc.append(acc)
@@ -425,7 +425,7 @@ class Server(object):
 
                 for idx in idxs_users:
                     local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
-                                batch_size = self.batch_size, option = "eofc", seed = self.seed, prn = self.train_prn, penalty = test_penalty)
+                                batch_size = self.batch_size, option = "eofc", seed = self.seed, prn = self.train_prn, penalty = test_penalty, Z = self.Z)
 
                     w, loss = local_model.fc_update(
                                     model=copy.deepcopy(self.model), global_round=round_, 
@@ -452,7 +452,7 @@ class Server(object):
                 self.model.eval()
                 for c in range(m):
                     local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c],
-                                batch_size = self.batch_size, option = "eofc", seed = self.seed, prn = self.train_prn, penalty = penalty)
+                                batch_size = self.batch_size, option = "eofc", seed = self.seed, prn = self.train_prn, penalty = penalty, Z = self.Z)
                     # validation dataset inference
                     acc, loss, n_eyz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                     list_acc.append(acc)
@@ -492,7 +492,7 @@ class Server(object):
 
             for idx in idxs_users:
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
-                            batch_size = self.batch_size, option = "zafar", seed = self.seed, prn = self.train_prn, penalty = penalty)
+                            batch_size = self.batch_size, option = "zafar", seed = self.seed, prn = self.train_prn, penalty = penalty, Z = self.Z)
 
                 w, loss = local_model.fc_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
@@ -519,7 +519,7 @@ class Server(object):
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c],
-                            batch_size = self.batch_size, option = "zafar", seed = self.seed, prn = self.train_prn, penalty = penalty)
+                            batch_size = self.batch_size, option = "zafar", seed = self.seed, prn = self.train_prn, penalty = penalty, Z = self.Z)
                 # validation dataset inference
                 acc, loss, n_eyz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                 list_acc.append(acc)
@@ -582,7 +582,7 @@ class Server(object):
 
                 for idx in idxs_users:
                     local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
-                                batch_size = self.batch_size, option = "ftrain", seed = self.seed, prn = self.train_prn)
+                                batch_size = self.batch_size, option = "ftrain", seed = self.seed, prn = self.train_prn, Z = self.Z)
 
                     w_g, w_d, loss = local_client.ftrain_update(
                                     generator = copy.deepcopy(self.model), discriminator = discriminator, global_round=round_, 
@@ -613,7 +613,7 @@ class Server(object):
                 self.model.eval()
                 for c in range(m):
                     local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
-                                batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn)
+                                batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn, Z = self.Z)
                     # validation dataset inference
                     acc, n_eyz_c, acc_loss, adv_loss = local_client.al_inference(self.model, discriminator) 
                     list_acc.append(acc)
@@ -681,7 +681,7 @@ class Server(object):
 
             for idx in idxs_users:
                 local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
-                            batch_size = self.batch_size, option = "al", seed = self.seed, prn = self.train_prn)
+                            batch_size = self.batch_size, option = "al", seed = self.seed, prn = self.train_prn, Z = self.Z)
 
                 w, adv_w, loss = local_client.al_update(
                                 model=copy.deepcopy(self.model), adv_model = adv_model, global_round=round_, 
@@ -712,7 +712,7 @@ class Server(object):
             self.model.eval()
             for c in range(m):
                 local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
-                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn)
+                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn, Z = self.Z)
                 # validation dataset inference
                 acc, n_eyz_c, acc_loss, adv_loss = local_client.al_inference(self.model, adv_model) 
                 list_acc.append(acc)
@@ -786,7 +786,7 @@ class Server(object):
                 local_model = Client(dataset=self.train_dataset,
                                             idxs=np.concatenate((clients_idx_sen[min_z][c], clients_idx_sen[max_z][c]), axis = None), batch_size = self.batch_size, 
                                         option = "threshold adjusting",  
-                                        seed = self.seed, prn = self.train_prn)
+                                        seed = self.seed, prn = self.train_prn, Z = self.Z)
 
                 w[0][c], w[1][c] = local_model.threshold_adjusting(
                                 models=copy.deepcopy(models), 
@@ -809,7 +809,7 @@ class Server(object):
                     local_model = Client(dataset=self.train_dataset,
                                                 idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
                                             option = "threshold adjusting",  
-                                            seed = self.seed, prn = self.train_prn)
+                                            seed = self.seed, prn = self.train_prn, Z = self.Z)
                     acc, loss, n_eyz_c, _, _, _ = local_model.inference(model = models[sen])
                     train_loss.append(loss)
                     train_acc.append(acc)

@@ -23,7 +23,7 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 #########################################################
 
 class Client(object):
-    def __init__(self, dataset, idxs, batch_size, option, seed = 0, prn = True, lbd = None, penalty = 500):
+    def __init__(self, dataset, idxs, batch_size, option, seed = 0, prn = True, lbd = None, penalty = 500, Z = 2):
         self.seed = seed 
         self.dataset = dataset
         self.idxs = idxs
@@ -31,6 +31,7 @@ class Client(object):
         self.prn = prn
         self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, lbd)
         self.penalty = penalty
+        self.Z = Z
 
     def train_val(self, dataset, idxs, batch_size, lbd):
         """
@@ -627,8 +628,11 @@ class Client(object):
 
         model.eval()
         loss, total, correct, fair_loss, acc_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-        loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        n_yz, loss_yz = {}, {}
+        for y in [0,1]:
+            for z in range(self.Z):
+                loss_yz[(y,z)] = 0
+                n_yz[(y,z)] = 0
         
         # dataset = self.validloader if option != "FairBatch" else self.dataset
         for _, (features, labels, sensitive) in enumerate(self.validloader):
