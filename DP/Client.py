@@ -1,5 +1,8 @@
-from numpy.core.fromnumeric import squeeze
-import torch, copy, time, random, warnings
+# Client for Demographic parity
+
+import torch, random, sys
+
+sys.path.insert(0, '..')
 
 import numpy as np
 
@@ -20,12 +23,13 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 #########################################################
 
 class Client(object):
-    def __init__(self, dataset, idxs, batch_size, option, seed = 0, prn = True, lbd = None, penalty = 500):
+    def __init__(self, dataset, idxs, batch_size, option, seed = 0, prn = True, lbd = None, penalty = 500, Z = 2):
         self.seed = seed 
         self.dataset = dataset
         self.idxs = idxs
         self.option = option
         self.prn = prn
+        self.Z = Z
         self.trainloader, self.validloader = self.train_val(dataset, list(idxs), batch_size, lbd)
         self.penalty = penalty
 
@@ -43,7 +47,7 @@ class Client(object):
         if self.option == "FairBatch": 
             # FairBatch(self, train_dataset, lbd, client_idx, batch_size, replacement = False, seed = 0)
             sampler = FairBatch(DatasetSplit(dataset, idxs_train), lbd, idxs,
-                                 batch_size = batch_size, replacement = False, seed = self.seed)
+                                 batch_size = batch_size, replacement = False, seed = self.seed, Z = self.Z)
             trainloader = DataLoader(DatasetSplit(dataset, idxs_train), sampler = sampler,
                                      batch_size=batch_size, num_workers = 0)
                         
@@ -98,9 +102,11 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
-    def threshold_adjusting(self, model, global_round, learning_rate, local_epochs, optimizer): 
+    def threshold_adjusting(self, models, learning_rate, local_epochs, optimizer, update_step): 
+        z = list(update_step.keys())
         # Set mode to train model
-        model.train()
+        models[z[0]].train()
+        models[z[1]].train()
 
         # set seed
         np.random.seed(self.seed)
@@ -109,16 +115,19 @@ class Client(object):
 
         # Set optimizer for the local updates
         if optimizer == 'sgd':
-            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
-                                        ) # momentum=0.5
+            optimizer = [torch.optim.SGD(models[z[0]].parameters(), lr=0.005) ,
+                        torch.optim.SGD(models[z[1]].parameters(), lr=0.005)] 
         elif optimizer == 'adam':
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                        weight_decay=1e-4)
+            optimizer = [torch.optim.Adam(models[z[0]].parameters(), lr=0.005, weight_decay=1e-4),
+                        torch.optim.Adam(models[z[1]].parameters(), lr=0.005, weight_decay=1e-4)]
         bias_grad = 0
-        for _ in range(local_epochs):
+        for epoch in range(local_epochs):
             # only update the bias
-            param = next(model.parameters())
-            param.requires_grad = False
+            param0 = next(models[z[0]].parameters())
+            param0.requires_grad = False
+
+            param1 = next(models[z[1]].parameters())
+            param1.requires_grad = False
 
             for _, (features, labels, sensitive) in enumerate(self.trainloader):
                 features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
@@ -127,18 +136,26 @@ class Client(object):
                 # because PyTorch accumulates the gradients on subsequent backward passes. 
                 # This is convenient while training RNNs
                 
-                probas, logits = model(features)
-                loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive)
-                    
-                optimizer.zero_grad()
-                # compute the gradients
-                loss.backward()
-                # get the gradient of the bias
-                bias_grad += model.linear.bias.grad
-                # paarameter update
-                optimizer.step()
+                group_idx, loss, bias_grad, w = [], [0,0], [0,0], []
+                for i in [0,1]:
+                    w.append(copy.deepcopy(models[z[i]]).state_dict())
+                    group_idx.append(torch.where(sensitive == z[i]))
+
+                    probas, logits = models[z[i]](features[group_idx[i]])
+                    loss[i], _, _ = loss_func(self.option, logits, labels[group_idx[i]], probas, sensitive[group_idx[i]])
+                    optimizer[i].zero_grad()
+                    # compute the gradients
+                    loss[i].backward()
+                    # get the gradient of the bias
+                    bias_grad[i] = models[z[0]].linear.bias.grad[1]
+
+                update_idx = np.argmin(bias_grad)
+                w[update_idx]['linear.bias'][1] += learning_rate * update_step[z[update_idx]] / (epoch + 1) ** .5
+                w[update_idx]['linear.bias'][0] -= learning_rate * update_step[z[update_idx]] / (epoch + 1) ** .5
+                models[z[update_idx]].load_state_dict(w[update_idx])
         # weight, loss
-        return model.state_dict(), bias_grad
+        # print(models[z[0]].state_dict(), models[z[1]].state_dict())
+        return models[z[0]].state_dict(), models[z[1]].state_dict()
 
     def bc_update(self, model, mu, global_round, learning_rate, local_epochs, optimizer):
         # Set mode to train model
@@ -208,16 +225,12 @@ class Client(object):
 
         v = torch.ones(len(y)).type(torch.DoubleTensor)
 
-        n, nz, yz, yhat = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), (probas * v).sum().item()
-        # z_i = 0
-        z0_idx = torch.where(z == 0)[0]
-        yz[0] = (probas[z0_idx] * v[z0_idx]).sum().item()
-        nz[0] = v[z0_idx].sum().item()
-
-        # z_i = 1
-        z1_idx = torch.where(z == 1)[0]
-        yz[1] = (probas[z1_idx] * v[z1_idx]).sum().item()
-        nz[1] = v[z1_idx].sum().item()
+        n, nz, yz, yhat = v.sum().item(), torch.zeros(self.Z).type(torch.DoubleTensor), torch.zeros(self.Z).type(torch.DoubleTensor), (probas * v).sum().item()
+        z_idx = []
+        for z_ in range(self.Z):
+            z_idx.append(torch.where(z_ == z)[0])
+            yz[z_] = (probas[z_idx[z_]] * v[z_idx[z_]]).sum().item()
+            nz[z_] = v[z_idx[z_]].sum().item()
 
         return n, nz, yz, yhat
 
@@ -286,24 +299,19 @@ class Client(object):
 
         probas, _ = model(x)
         _, pred_labels = torch.max(probas, 1)
-        prob = [0,0]
-        prob[0] = torch.sum((pred_labels == 1) & (z == 0)).item() / torch.sum(z == 0).item()
-        prob[1] = torch.sum((pred_labels == 1) & (z == 1)).item() / torch.sum(z == 1).item()
+        prob = torch.zeros(self.Z)
+        for z_ in range(self.Z): 
+            prob[z_] = torch.sum((pred_labels == 1) & (z == z_)).item() / torch.sum(z == z_).item()
 
         v = torch.ones(len(y)).type(torch.DoubleTensor)
 
-        n, nz, yz = v.sum().item(), torch.tensor([0.0,0.0]).type(torch.DoubleTensor), torch.tensor([0.0,0.0]).type(torch.DoubleTensor)
-        # z_i = 0
-        z0_idx = torch.where(z == 0)[0]
-        yz[0] = (prob[0] * v[z0_idx]).sum().item()
-        nz[0] = v[z0_idx].sum().item()
-
-        # z_i = 1
-        z1_idx = torch.where(z == 1)[0]
-        yz[1] = (prob[1] * v[z1_idx]).sum().item()
-        nz[1] = v[z1_idx].sum().item()
-
-        yhat = yz[0] + yz[1]
+        n, nz, yz = v.sum().item(), torch.zeros(self.Z).type(torch.DoubleTensor), torch.zeros(self.Z).type(torch.DoubleTensor)
+        z_idx, yhat = [], 0
+        for z_ in range(self.Z): 
+            z_idx.append(torch.where(z == z_)[0])
+            yz[z_] = (prob[z_] * v[z_idx[z_]]).sum().item()
+            nz[z_] = v[z_idx[z_]].sum().item()
+            yhat += yz[z_]
         return n, nz, yz, yhat
 
     def mean_sensitive_stat(self): 
@@ -442,7 +450,10 @@ class Client(object):
     def al_inference(self, model, adv_model):
         model.eval()
         total, correct, acc_loss, adv_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        n_yz = {}
+        for y in [0,1]:
+            for z in range(self.Z):
+                n_yz[(y,z)] = 0
         
         for _, (features, labels, sensitive) in enumerate(self.validloader):
             features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
@@ -591,7 +602,10 @@ class Client(object):
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
         x = x.to(DEVICE)
 
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        n_yz = {}
+        for y_ in [0,1]:
+            for z_ in range(self.Z):
+                n_yz[(y_,z_)] = 0
         for y_, z_ in n_yz:
             n_yz[(y_,z_)] = torch.sum((y == y_) & (z == z_)).item()
 
@@ -611,8 +625,11 @@ class Client(object):
 
         model.eval()
         loss, total, correct, fair_loss, acc_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-        loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
+        n_yz, loss_yz = {}, {}
+        for y in [0,1]:
+            for z in range(self.Z):
+                loss_yz[(y,z)] = 0
+                n_yz[(y,z)] = 0
         
         # dataset = self.validloader if option != "FairBatch" else self.dataset
         for _, (features, labels, sensitive) in enumerate(self.validloader):
