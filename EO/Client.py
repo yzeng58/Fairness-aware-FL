@@ -84,7 +84,10 @@ class Client(object):
                 # This is convenient while training RNNs
                 
                 probas, logits = model(features)
-                loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive, self.penalty)
+                if self.option == 'unconstrained':
+                    loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive, self.penalty)
+                else:
+                    loss = eo_loss(logits, labels, sensitive, self.penalty, option = self.option)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -183,12 +186,12 @@ class Client(object):
                 v = torch.randn(len(labels)).type(torch.DoubleTensor)
                 # labels_i == 1
                 y1_idx = torch.where(labels == 1)[0]
-                exp = np.exp(mu[sensitive[y1_idx]])
+                exp = np.exp(torch.index_select(mu, 0, sensitive[y1_idx].type(torch.LongTensor)))
                 v[y1_idx] = exp / (1 + exp)
 
                 # labels_i == 0
-                y0_idx = torch.where(labels == 0)[0]
-                exp = np.exp(mu[sensitive[y0_idx]])
+                y0_idx = torch.where(labels == 0)[0].type(torch.LongTensor)
+                exp = np.exp(torch.index_select(mu, 0, sensitive[y0_idx].type(torch.LongTensor)))
                 v[y0_idx] = 1 / (1 + exp)
 
                 _, logits = model(features)
@@ -251,7 +254,7 @@ class Client(object):
 
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
                 features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                sensitive = sensitive.to(DEVICE)
+                sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
 
                 # for the first 100 epochs, train both generator and discriminator
                 # after the first 100 epochs, ratio of updating generator and discriminator (1:ratio_gd training)
@@ -507,8 +510,8 @@ class Client(object):
                     n_eyz[(e,y,z)] = 0
         
         for _, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-            sensitive = sensitive.to(DEVICE)
+            features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+            sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
             # Inference
             outputs, logits = model(features)
@@ -557,8 +560,8 @@ class Client(object):
         
         # dataset = self.validloader if option != "FairBatch" else self.dataset
         for _, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-            sensitive = sensitive.to(DEVICE)
+            features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+            sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
             # Inference
             outputs, logits = model(features)

@@ -8,7 +8,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
           local_epochs = 40, alpha = 1, option = "FairBatch",
           optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
           adjusting_alpha = 0.7, epsilon = 0.02, test_lr = 0.01, test_rounds = 3, test_penalty = 10, 
-          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, adaptive_lr = True, lambda_d = 0.8):
+          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, adaptive_lr = True, lambda_d = 0.8, adaptive_penalty = True, fixed_dataset = None):
     """
     Run simulations.
     """
@@ -16,13 +16,15 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
     test_acc, rd = [], []
     start = time.time()
     
+    if fixed_dataset: synthetic_info = dataGenerate(seed = fixed_dataset, train_samples = train_samples, test_samples = test_samples)
     for i in range(num_sim):
         seed = int(time.time()%1000)
         print("|  Simulation : %d | " % (i+1))
         print("      seed : %d -----" % seed)
         
         # generate the synthetic dataset
-        synthetic_info = dataGenerate(seed = seed, train_samples = train_samples, test_samples = test_samples)
+        if fixed_dataset == None: 
+            synthetic_info = dataGenerate(seed = seed, train_samples = train_samples, test_samples = test_samples)
         
         server = Server(logReg(num_features=3, num_classes=2, seed=seed), synthetic_info, seed = seed, ret = True, train_prn = False)
         # train the model with the synthetic dataset
@@ -46,7 +48,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
 
         elif option == 'fairness constraint':
             test_acc_i, rd_i = server.FairConstraints(test_rounds = test_rounds, test_lr = test_lr, num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
-                optimizer = optimizer, penalty = penalty, test_penalty = test_penalty)
+                optimizer = optimizer, penalty = penalty, test_penalty = test_penalty, adaptive_penalty = adaptive_penalty)
 
         elif option == 'ftrain':
             test_acc_i, rd_i = server.FTrain(num_rounds = num_rounds, local_epochs = local_epochs, init_epochs = init_epochs, 
@@ -56,6 +58,10 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
             server.Unconstrained(num_rounds = 1, local_epochs = local_epochs, learning_rate = 0.01, optimizer = 'adam')
             test_acc_i, rd_i = server.AdversarialLearning(num_rounds = num_rounds-1, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, epsilon = epsilon, alpha = alpha, adaptive_lr = adaptive_lr)
+
+        elif option == 'local fairness constraint':
+            test_acc_i, rd_i = server.LocalFC(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, penalty = penalty)
 
         else:
             print('Approach %s is not supported!' % option)

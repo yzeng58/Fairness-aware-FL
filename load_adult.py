@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import numpy as np
 
-from torchvision import transforms
 from utils import *
 import torch
 
@@ -14,7 +13,7 @@ def process_adult(filename):
                 'occupation', 'relationship', 'race', 'sex', 'capital-gain', 'capital-loss',
                 'hours-per-week', 'native-country', 'salary']
 
-    adult = pd.read_csv(os.path.join('adult', filename), delimiter = ',', header = None)
+    adult = pd.read_csv(os.path.join('..', 'adult', filename), delimiter = ',', header = None)
     adult.columns =  header
 
     # sensitive attribute

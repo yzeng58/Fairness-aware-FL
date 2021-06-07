@@ -177,18 +177,18 @@ class Client(object):
         for i in range(local_epochs):
             batch_loss = []
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                sensitive = sensitive.to(DEVICE)
+                features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
                 
                 v = torch.randn(len(labels)).type(torch.DoubleTensor)
                 # labels_i == 1
                 y1_idx = torch.where(labels == 1)[0]
-                exp = np.exp(mu[sensitive[y1_idx]])
+                exp = np.exp(torch.index_select(mu, 0, sensitive[y1_idx].type(torch.LongTensor)))
                 v[y1_idx] = exp / (1 + exp)
 
                 # labels_i == 0
                 y0_idx = torch.where(labels == 0)[0]
-                exp = np.exp(mu[sensitive[y0_idx]])
+                exp = np.exp(torch.index_select(mu, 0, sensitive[y0_idx].type(torch.LongTensor)))
                 v[y0_idx] = 1 / (1 + exp)
 
                 _, logits = model(features)
@@ -234,6 +234,32 @@ class Client(object):
 
         return n, nz, yz, yhat
 
+    def postbc_compute(self, model, mu):
+        model.eval()
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        trainloader = DatasetSplit(self.dataset, self.idxs)      
+        x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
+        x = x.to(DEVICE)
+
+        probas, _ = model(x)
+        probas = probas.T[1] / torch.sum(probas, dim = 1)
+
+        n, nz, yz = len(y), torch.zeros(self.Z).type(torch.DoubleTensor), torch.zeros(self.Z).type(torch.DoubleTensor)
+        for y_ in [0,1]:
+            for z_ in range(self.Z):
+                yz_idx = torch.where((z_ == z) & (y == y_))[0]
+                if y_ == 1:
+                    probas[yz_idx] = probas[yz_idx]/(probas[yz_idx] + (1-probas[yz_idx]) * np.exp(-mu[z_]))
+                yz[z_] += probas[yz_idx].sum().item()
+                nz[z_] += len(yz_idx)
+        yhat = probas.sum().item()
+        return n, nz, yz, yhat
+
     def bc3_update(self, model, mu, global_round, learning_rate, local_epochs, optimizer):
         # Set mode to train model
         model.train()
@@ -254,18 +280,18 @@ class Client(object):
         for i in range(local_epochs):
             batch_loss = []
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                sensitive = sensitive.to(DEVICE)
+                features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
                 
                 v = torch.randn(len(labels)).type(torch.DoubleTensor)
                 # labels_i == 1
                 y1_idx = torch.where(labels == 1)[0]
-                exp = np.exp(mu[sensitive[y1_idx]])
+                exp = np.exp(torch.index_select(mu, 0, sensitive[y1_idx].type(torch.LongTensor)))
                 v[y1_idx] = exp
 
                 # labels_i == 0
                 y0_idx = torch.where(labels == 0)[0]
-                exp = np.exp(mu[sensitive[y0_idx]])
+                exp = np.exp(torch.index_select(mu, 0, sensitive[y0_idx].type(torch.LongTensor)))
                 v[y0_idx] = 1 
 
                 _, logits = model(features)
@@ -456,8 +482,8 @@ class Client(object):
                 n_yz[(y,z)] = 0
         
         for _, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-            sensitive = sensitive.to(DEVICE)
+            features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+            sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
             # Inference
             outputs, logits = model(features)
@@ -502,8 +528,8 @@ class Client(object):
             epoch = global_round * local_epochs + i
 
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-                sensitive = sensitive.to(DEVICE)
+                features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
 
                 # for the first 100 epochs, train both generator and discriminator
                 # after the first 100 epochs, ratio of updating generator and discriminator (1:ratio_gd training)
@@ -575,7 +601,7 @@ class Client(object):
                 
                 for y, z in lbd:
                     group_idx[(y,z)] = torch.where((labels == y) & (sensitive == z))[0]
-                    v[group_idx[(y,z)]] = lbd[(y,z)] * (m_yz[(y,z)] + m_yz[(y, 1-z)]) / m_yz[(y,z)]
+                    v[group_idx[(y,z)]] = lbd[(y,z)] * sum([m_yz[(y,z)] for z in range(self.Z)]) / m_yz[(y,z)]
                     nc += v[group_idx[(y,z)]].sum().item()
 
                 # print(logits)
@@ -673,3 +699,53 @@ class Client(object):
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, loss_yz
         else:
             return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, None
+
+    def postbc_inference(self, model, mu):
+        model.eval()
+        loss, total, correct, fair_loss, acc_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0.0, 0
+        n_yz, loss_yz = {}, {}
+        for y in [0,1]:
+            for z in range(self.Z):
+                loss_yz[(y,z)] = 0
+                n_yz[(y,z)] = 0
+        
+        # dataset = self.validloader if option != "FairBatch" else self.dataset
+        for _, (features, labels, sensitive) in enumerate(self.validloader):
+            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+            sensitive = sensitive.to(DEVICE)
+            
+            # Inference
+            outputs, logits = model(features)
+            probas = torch.ones(outputs.shape).T
+            probas[0] = outputs.T[0] / torch.sum(outputs, dim = 1)
+            probas[1] = outputs.T[1] / torch.sum(outputs, dim = 1)
+
+            # Prediction
+            for y in [0,1]:
+                for z_ in range(self.Z):
+                    yz_idx = torch.where((z_ == sensitive) & (labels == y))[0]
+                    if y == 1:
+                        probas[1][yz_idx] = probas[1][yz_idx]/(probas[1][yz_idx] + (1-probas[1][yz_idx]) * np.exp(-mu[z_]))
+                        probas[0][yz_idx] = probas[0][yz_idx]/(probas[0][yz_idx] + (1-probas[0][yz_idx]) * np.exp(mu[z_]))  
+
+            _, pred_labels = torch.max(probas.T, 1)
+            pred_labels = pred_labels.view(-1)
+            bool_correct = torch.eq(pred_labels, labels)
+            correct += torch.sum(bool_correct).item()
+            total += len(labels)
+            num_batch += 1
+            
+            group_boolean_idx = {}
+            
+            for yz in n_yz:
+                group_boolean_idx[yz] = (labels == yz[0]) & (sensitive == yz[1])
+                n_yz[yz] += torch.sum((pred_labels == yz[0]) & (sensitive == yz[1])).item()     
+            
+            logits = logit_compute(probas.T)
+            batch_loss, batch_acc_loss, batch_fair_loss = loss_func(self.option, logits, 
+                                                        labels, probas.T, sensitive, self.penalty)
+            loss, acc_loss, fair_loss = (loss + batch_loss.item(), 
+                                            acc_loss + batch_acc_loss.item(), 
+                                            fair_loss + batch_fair_loss.item())
+        accuracy = correct/total
+        return accuracy, loss, n_yz, acc_loss / num_batch, fair_loss / num_batch, None
