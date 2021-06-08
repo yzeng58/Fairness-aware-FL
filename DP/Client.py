@@ -177,7 +177,7 @@ class Client(object):
         for i in range(local_epochs):
             batch_loss = []
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
                 sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
                 
                 v = torch.randn(len(labels)).type(torch.DoubleTensor)
@@ -280,7 +280,7 @@ class Client(object):
         for i in range(local_epochs):
             batch_loss = []
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
                 sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
                 
                 v = torch.randn(len(labels)).type(torch.DoubleTensor)
@@ -482,7 +482,7 @@ class Client(object):
                 n_yz[(y,z)] = 0
         
         for _, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
             sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
             # Inference
@@ -528,7 +528,7 @@ class Client(object):
             epoch = global_round * local_epochs + i
 
             for batch_idx, (features, labels, sensitive) in enumerate(self.trainloader):
-                features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
                 sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
 
                 # for the first 100 epochs, train both generator and discriminator
@@ -660,7 +660,7 @@ class Client(object):
         # dataset = self.validloader if option != "FairBatch" else self.dataset
         for _, (features, labels, sensitive) in enumerate(self.validloader):
             features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
-            sensitive = sensitive.to(DEVICE)
+            sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
             # Inference
             outputs, logits = model(features)
@@ -673,7 +673,7 @@ class Client(object):
             correct += torch.sum(bool_correct).item()
             total += len(labels)
             num_batch += 1
-            
+
             group_boolean_idx = {}
             
             for yz in n_yz:

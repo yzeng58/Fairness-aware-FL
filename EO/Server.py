@@ -93,8 +93,7 @@ class Server(object):
 
             for idx in idxs_users:
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
-                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn,
-                            Z = self.Z, penalty = 0)
+                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn, Z = self.Z)
 
                 w, loss = local_model.standard_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
@@ -114,28 +113,27 @@ class Server(object):
             list_acc = []
             # the number of samples which are assigned to class y and belong to the sensitive group z
             n_eyz = {}
-            for y in [0,1]:
-                for z in range(self.Z):
-                    for e in [0,1]:
+            for e in [0,1]:
+                for y in [0,1]:
+                    for z in range(self.Z):
                         n_eyz[(e,y,z)] = 0
-
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
-                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn,
-                            Z = self.Z)
+                            batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn, Z = self.Z)
                 # validation dataset inference
                 acc, loss, n_eyz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                 list_acc.append(acc)
                 
-                for e,y,z in n_eyz:
-                    n_eyz[(e,y,z)] += n_eyz_c[(e,y,z)]
+                for eyz in n_eyz:
+                    n_eyz[eyz] += n_eyz_c[eyz]
                     
                 if self.prn: 
                     print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
                             c+1, acc_loss, fair_loss, self.metric, self.disparity(n_eyz_c)))
 
             train_accuracy.append(sum(list_acc)/len(list_acc))
+
             # print global training loss after every 'i' rounds
             if self.prn:
                 if (round_+1) % self.print_every == 0:

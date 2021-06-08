@@ -133,7 +133,7 @@ class Server(object):
                 # validation dataset inference
                 acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                 list_acc.append(acc)
-                
+
                 for yz in n_yz:
                     n_yz[yz] += n_yz_c[yz]
                     
@@ -1914,7 +1914,7 @@ class Server(object):
                                 shuffle=False)
 
         for _, (features, labels, sensitive) in enumerate(testloader):
-            features = features.to(DEVICE)
+            features = features.to(DEVICE).type(torch.LongTensor)
             labels =  labels.to(DEVICE).type(torch.LongTensor)
             # Inference
             outputs, _ = model(features)

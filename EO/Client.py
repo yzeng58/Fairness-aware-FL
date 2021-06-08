@@ -56,7 +56,7 @@ class Client(object):
         validloader = DataLoader(DatasetSplit(dataset, idxs_val),
                                      batch_size=max(int(len(idxs_val)/10),10), shuffle=False)
         return trainloader, validloader
-
+    
     def standard_update(self, model, global_round, learning_rate, local_epochs, optimizer): 
         # Set mode to train model
         model.train()
@@ -85,9 +85,10 @@ class Client(object):
                 
                 probas, logits = model(features)
                 if self.option == 'unconstrained':
-                    loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive, self.penalty)
+                    loss, _, _ = loss_func(self.option, logits, labels, probas, sensitive, 0)
                 else:
-                    loss = eo_loss(logits, labels, sensitive, self.penalty, option = self.option)
+                    loss = eo_loss(logits,labels, sensitive, self.penalty)
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -510,7 +511,7 @@ class Client(object):
                     n_eyz[(e,y,z)] = 0
         
         for _, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
             sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
             # Inference
@@ -560,7 +561,7 @@ class Client(object):
         
         # dataset = self.validloader if option != "FairBatch" else self.dataset
         for _, (features, labels, sensitive) in enumerate(self.validloader):
-            features, labels = features.to(DEVICE).type(torch.LongTensor), labels.to(DEVICE).type(torch.LongTensor)
+            features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
             sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
             # Inference
