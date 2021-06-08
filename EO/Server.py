@@ -976,7 +976,7 @@ class Server(object):
                                 shuffle=False)
 
         for _, (features, labels, sensitive) in enumerate(testloader):
-            features = features.to(DEVICE).type(torch.LongTensor)
+            features = features.to(DEVICE)
             labels =  labels.to(DEVICE).type(torch.LongTensor)
             # Inference
             outputs, _ = model(features)
