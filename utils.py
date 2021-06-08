@@ -52,6 +52,9 @@ class logReg(torch.nn.Module):
         logits = self.linear(x.float())
         probas = torch.sigmoid(logits)
         return probas.type(torch.FloatTensor), logits
+
+def logit_compute(probas):
+    return torch.log(probas/(1-probas))
     
 def riskDifference(n_yz, absolute = True):
     """
@@ -161,13 +164,23 @@ def loss_func(option, logits, targets, outputs, sensitive, larg = 1):
     else:
         return acc_loss, acc_loss, larg*fair_loss
 
-def eo_loss(logits, targets, sensitive, larg, mean_z1, left):
+def eo_loss(logits, targets, sensitive, larg, mean_z1 = None, left = None, option = 'local fc'):
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
     y1_idx = torch.where(targets == 1)
-    fair_loss = torch.mean(torch.mul(sensitive[y1_idx] - mean_z1, logits.T[0][y1_idx] - torch.mean(logits.T[0][y1_idx])))
+    if option == 'unconstrained':
+        return acc_loss
     if left:
+        fair_loss = torch.mean(torch.mul(sensitive[y1_idx] - mean_z1, logits.T[0][y1_idx] - torch.mean(logits.T[0][y1_idx])))
         return acc_loss - larg * fair_loss
-    else: 
+    elif left == False: 
+        fair_loss = torch.mean(torch.mul(sensitive[y1_idx] - mean_z1, logits.T[0][y1_idx] - torch.mean(logits.T[0][y1_idx])))
+        return acc_loss + larg * fair_loss
+    else:
+        fair_loss0 = torch.mul(sensitive[y1_idx] - sensitive.type(torch.FloatTensor).mean(), logits.T[0][y1_idx] - torch.mean(logits.T[0][y1_idx]))
+        fair_loss0 = torch.mean(torch.mul(fair_loss0, fair_loss0)) 
+        fair_loss1 = torch.mul(sensitive[y1_idx] - sensitive.type(torch.FloatTensor).mean(), logits.T[1][y1_idx] - torch.mean(logits.T[1][y1_idx]))
+        fair_loss1 = torch.mean(torch.mul(fair_loss1, fair_loss1)) 
+        fair_loss = fair_loss0 + fair_loss1
         return acc_loss + larg * fair_loss
 
 def zafar_loss(logits, targets, outputs, sensitive, larg, mean_z, left):
