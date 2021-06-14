@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import pandas as pd
 from scipy.stats import multivariate_normal
-import torch, random, copy
+import torch, random, copy, os
 
 class LoadData(Dataset):
     def __init__(self, df, pred_var, sen_var):
@@ -269,4 +269,31 @@ def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500,
     synthetic_info = [train_dataset, test_dataset, clients_idx]
     return synthetic_info
 
+def process_csv(dir_name, filename, label_name, sensitive_attributes, categorial_attributes, continuous_attributes, features_to_keep, na_values):
+    """
+    process the adult file: scale, one-hot encode
+    only support binary sensitive attributes -> [gender, race] -> 4 sensitive groups 
+    """
 
+    df = pd.read_csv(os.path.join('..', dir_name, filename), delimiter = ',', header = None)
+    df.columns =  features_to_keep
+
+    # apply one-hot encoding to convert the categorical attributes into vectors
+    df = pd.get_dummies(df, columns = categorial_attributes)
+
+    # normalize numerical attributes to the range within [0, 1]
+    def scale(vec):
+        minimum = min(vec)
+        maximum = max(vec)
+        return (vec-minimum)/(maximum-minimum)
+
+    df[continuous_attributes] = df[continuous_attributes].apply(scale, axis = 0)
+    
+    df[label_name] = df[label_name].astype('category').cat.codes
+    df['z'] = 0
+    for i in range(len(sensitive_attributes)):
+        sen = sensitive_attributes[i]
+        df[sen] = df[sen].astype('category').cat.codes
+        df['z'] += (2**i) * df[sen]
+    df = df.drop(columns = sensitive_attributes)
+    return df
