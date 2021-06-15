@@ -627,7 +627,7 @@ class Server(object):
 
                 w, loss = local_model.bc_update(
                                 model=copy.deepcopy(self.model), mu = mu, global_round=round_, 
-                                    learning_rate = learning_rate, local_epochs = local_epochs, 
+                                    learning_rate = learning_rate / (round_+1), local_epochs = local_epochs, 
                                     optimizer = optimizer)
                 local_weights.append(copy.deepcopy(w))
                 local_losses.append(copy.deepcopy(loss))
@@ -1368,7 +1368,7 @@ class Server(object):
 
                 w, loss, nc_ = local_model.fb_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
-                                    learning_rate = learning_rate, local_epochs = local_epochs, 
+                                    learning_rate = learning_rate / (round_+1), local_epochs = local_epochs, 
                                     optimizer = optimizer, lbd = lbd, m_yz = m_yz)
                 nc.append(nc_)
                 local_weights.append(copy.deepcopy(w))

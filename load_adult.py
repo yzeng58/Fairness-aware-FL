@@ -5,15 +5,15 @@ import torch
    
 if __name__ == "load_adult":
     sensitive_attributes = ['sex']
-    categorial_attributes = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'native-country']
+    categorical_attributes = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'native-country']
     continuous_attributes = ["age", "fnlwgt", "education-num", "capital-gain", "capital-loss", "hours-per-week"]
     features_to_keep = ['age', 'workclass', 'fnlwgt', 'education', 'education-num', 'marital-status',
                 'occupation', 'relationship', 'race', 'sex', 'capital-gain', 'capital-loss','hours-per-week', 
                 'native-country', 'salary']
     label_name = 'salary'
 
-    adult = process_csv('adult', 'adult.data', label_name, sensitive_attributes, categorial_attributes, continuous_attributes, features_to_keep, na_values = [])
-    test = process_csv('adult', 'adult.test', label_name, sensitive_attributes, categorial_attributes, continuous_attributes, features_to_keep, na_values = []) # the distribution is very different from training distribution
+    adult = process_csv('adult', 'adult.data', label_name, ' >50K', sensitive_attributes, [' Female'], categorical_attributes, continuous_attributes, features_to_keep, na_values = [], header = None, columns = features_to_keep)
+    test = process_csv('adult', 'adult.test', label_name, ' >50K.', sensitive_attributes, [' Female'], categorical_attributes, continuous_attributes, features_to_keep, na_values = [], header = None, columns = features_to_keep) # the distribution is very different from training distribution
     test['native-country_ Holand-Netherlands'] = 0
     test = test[adult.columns]
 
