@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import pandas as pd
 from scipy.stats import multivariate_normal
-import torch, random, copy
+import torch, random, copy, os
 
 class LoadData(Dataset):
     def __init__(self, df, pred_var, sen_var):
@@ -269,4 +269,38 @@ def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500,
     synthetic_info = [train_dataset, test_dataset, clients_idx]
     return synthetic_info
 
+def process_csv(dir_name, filename, label_name, favorable_class, sensitive_attributes, privileged_classes, categorical_attributes, continuous_attributes, features_to_keep, na_values = [], header = 'infer', columns = None):
+    """
+    process the adult file: scale, one-hot encode
+    only support binary sensitive attributes -> [gender, race] -> 4 sensitive groups 
+    """
 
+    df = pd.read_csv(os.path.join('..', dir_name, filename), delimiter = ',', header = header, na_values = na_values)
+    if header == None: df.columns = columns
+    df = df[features_to_keep]
+
+    # apply one-hot encoding to convert the categorical attributes into vectors
+    df = pd.get_dummies(df, columns = categorical_attributes)
+
+    # normalize numerical attributes to the range within [0, 1]
+    def scale(vec):
+        minimum = min(vec)
+        maximum = max(vec)
+        return (vec-minimum)/(maximum-minimum)
+    
+    df[continuous_attributes] = df[continuous_attributes].apply(scale, axis = 0)
+    df.loc[df[label_name] != favorable_class, label_name] = 'SwapSwapSwap'
+    df.loc[df[label_name] == favorable_class, label_name] = 1
+    df.loc[df[label_name] == 'SwapSwapSwap', label_name] = 0
+    df[label_name] = df[label_name].astype('category').cat.codes
+    if len(sensitive_attributes) > 1:
+        if privileged_classes != None:
+            for i in range(len(sensitive_attributes)):
+                df.loc[df[sensitive_attributes[i]] != privileged_classes[i], sensitive_attributes[i]] = 0
+                df.loc[df[sensitive_attributes[i]] == privileged_classes[i], sensitive_attributes[i]] = 1
+        df['z'] = list(zip(*[df[c] for c in sensitive_attributes]))
+        df['z'] = df['z'].astype('category').cat.codes
+    else:
+        df['z'] = df[sensitive_attributes[0]].astype('category').cat.codes
+    df = df.drop(columns = sensitive_attributes)
+    return df
