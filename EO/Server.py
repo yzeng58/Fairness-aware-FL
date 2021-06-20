@@ -652,7 +652,7 @@ class Server(object):
         if self.ret: return test_acc, rd
 
     def FTrain(self, num_rounds = 10, local_epochs = 30, lr_g = 0.005, lr_d = 0.01, 
-                    epsilon = None, sensitive_level = 2, num_classes = 2, ratio_gd = 3,
+                    epsilon = None, num_classes = 2, ratio_gd = 3,
                     lambda_d = 0.2, init_epochs = 100):
             # set seed
             np.random.seed(self.seed)
@@ -660,7 +660,7 @@ class Server(object):
             torch.manual_seed(self.seed)
 
             # discriminator: estimate the sensitive attribute
-            discriminator = logReg(num_classes, sensitive_level)
+            discriminator = logReg(num_classes, self.Z)
 
             # Training
             train_loss, train_accuracy = [], []
