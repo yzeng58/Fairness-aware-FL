@@ -539,7 +539,7 @@ class Client(object):
         accuracy = correct/total
         return accuracy, n_eyz, acc_loss / num_batch, adv_loss / num_batch
 
-    def inference(self, model):
+    def inference(self, model, train = False):
         """ 
         Returns the inference accuracy, 
                                 loss, 
@@ -560,8 +560,8 @@ class Client(object):
                 for e in [0,1]:
                     n_eyz[(e,y,z)] = 0
         
-        # dataset = self.validloader if option != "FairBatch" else self.dataset
-        for _, (features, labels, sensitive) in enumerate(self.validloader):
+        dataset = self.trainloader if train else self.validloader
+        for _, (features, labels, sensitive) in enumerate(dataset):
             features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
             sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             

@@ -41,8 +41,8 @@ if __name__ == "load_bank":
     bank = process_csv('bank', 'bank_cat_age.csv', label_name, 'yes', sensitive_attributes, None, categorical_attributes, continuous_attributes, features_to_keep, na_values = [])
     bank = bank.sample(frac=1).reset_index(drop=True)
 
-    train = bank.iloc[:int(len(bank)*.9)]
-    test = bank.iloc[int(len(bank)*.9):]
+    train = bank.iloc[:int(len(bank)*.8)]
+    test = bank.iloc[int(len(bank)*.8):]
 
     loan_idx = np.where(train.loan_no == 1)[0]
     loan_no_idx = np.where(train.loan_no == 0)[0]

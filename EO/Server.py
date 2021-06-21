@@ -322,7 +322,7 @@ class Server(object):
                                             idxs=self.clients_idx[c], batch_size = self.batch_size, option = "FairBatch", 
                                             lbd = lbd, seed = self.seed, prn = self.train_prn, Z = self.Z)
                 # validation dataset inference
-                acc, loss, n_eyz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model) 
+                acc, loss, n_eyz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model, train = True) 
                 list_acc.append(acc)
                 
                 for e,y,z in n_eyz:

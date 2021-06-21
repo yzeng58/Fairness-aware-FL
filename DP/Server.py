@@ -218,12 +218,12 @@ class Server(object):
 
             train_loss, train_acc = [], []
             for c in range(self.num_clients):
-                for sen in [0,1]:
+                for sen in range(self.Z):
                     local_model = Client(dataset=self.train_dataset,
                                                 idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
                                             option = "threshold adjusting",  
                                             seed = self.seed, prn = self.train_prn, Z = self.Z)
-                    acc, loss, n_yz_c, _, _, _ = local_model.inference(model = models[sen])
+                    acc, loss, n_yz_c, _, _, _ = local_model.inference(model = models[sen], train = True)
                     train_loss.append(loss)
                     train_acc.append(acc)
 

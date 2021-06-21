@@ -248,6 +248,7 @@ def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500,
         zs.append(z)
 
     data = pd.DataFrame(zip(np.array(xs).T[0], np.array(xs).T[1], ys, zs), columns = ["x1", "x2", "y", "z"])
+    # data = data.sample(frac=1).reset_index(drop=True)
     train_data = data[:train_samples]
     test_data = data[train_samples:]
     
