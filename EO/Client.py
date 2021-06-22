@@ -222,7 +222,8 @@ class Client(object):
         random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        trainloader = DatasetSplit(self.dataset, self.idxs)      
+        idxs_train = self.idxs[:int(0.9*len(self.idxs))]
+        trainloader = DatasetSplit(self.dataset, idxs_train)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
         x = x.to(DEVICE)
 
@@ -582,7 +583,6 @@ class Client(object):
                 group_boolean_idx[yz] = (labels == yz[0]) & (sensitive == yz[1])
                 if self.option == "FairBatch":
                 # the objective function have no lagrangian term
-
                     loss_yz_,_,_ = loss_func("FairBatch", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
                                          outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 

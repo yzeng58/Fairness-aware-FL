@@ -106,7 +106,13 @@ def EODisparity(n_eyz, each_z = False):
         eod = 0
         p11 = sum([n_eyz[(1,1,z)] for z in z_set]) / sum([n_eyz[(1,1,z)]+n_eyz[(0,1,z)] for z in z_set])
         for z in z_set:
-            eod_z = abs(n_eyz[(1,1,z)]/(n_eyz[(0,1,z)] + n_eyz[(1,1,z)]) - p11)
+            try:
+                eod_z = abs(n_eyz[(1,1,z)]/(n_eyz[(0,1,z)] + n_eyz[(1,1,z)]) - p11)
+            except ZeroDivisionError:
+                if n_eyz[(1,1,z)] == 0: 
+                    eod_z = 0
+                else:
+                    eod_z = 1
             if eod < eod_z:
                 eod = eod_z
         return eod
@@ -114,7 +120,13 @@ def EODisparity(n_eyz, each_z = False):
         eod = []
         p11 = sum([n_eyz[(1,1,z)] for z in z_set]) / sum([n_eyz[(1,1,z)]+n_eyz[(0,1,z)] for z in z_set])
         for z in z_set:
-            eod_z = n_eyz[(1,1,z)]/(n_eyz[(0,1,z)] + n_eyz[(1,1,z)]) - p11
+            try:
+                eod_z = n_eyz[(1,1,z)]/(n_eyz[(0,1,z)] + n_eyz[(1,1,z)]) - p11
+            except ZeroDivisionError:
+                if n_eyz[(1,1,z)] == 0: 
+                    eod_z = 0
+                else:
+                    eod_z = 1
             eod.append(eod_z)
         return eod
 
@@ -212,6 +224,7 @@ X_DIST = {0:{"mean":(-2,-2), "cov":np.array([[10,1], [1,3]])},
 def X_PRIME(x):
     return (x[0]*np.cos(np.pi/4) - x[1]*np.sin(np.pi/4), 
             x[0]*np.sin(np.pi/4) + x[1]*np.cos(np.pi/4))
+
 def Z_MEAN(x):
     """
     Given x, the probability of z = 1.

@@ -5,7 +5,6 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from collections import defaultdict
 
 sys.path.insert(0, '..')
 from utils import *

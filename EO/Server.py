@@ -899,12 +899,10 @@ class Server(object):
 
             train_loss, train_acc = [], []
             for c in range(self.num_clients):
-                for sen in [0,1]:
-                    local_model = Client(dataset=self.train_dataset,
-                                                idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
-                                            option = "threshold adjusting",  
-                                            seed = self.seed, prn = self.train_prn, Z = self.Z)
-                    acc, loss, n_eyz_c, _, _, _ = local_model.inference(model = models[sen])
+                for sen in range(self.Z):
+                    local_model = Client(dataset=self.train_dataset, idxs=clients_idx_sen[sen][c], batch_size = self.batch_size, 
+                                            option = "threshold adjusting", seed = self.seed, prn = self.train_prn, Z = self.Z)
+                    acc, loss, n_eyz_c, _, _, _ = local_model.inference(model = models[sen], train = True)
                     train_loss.append(loss)
                     train_acc.append(acc)
 
@@ -914,7 +912,7 @@ class Server(object):
             if self.prn:
                 if (round_+1) % self.print_every == 0:
                     print(f' \nAvg Training Stats after {round_+1} threshold adjusting global rounds:')
-                    print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation %s: %.4f" % (
+                    print("Training loss: %.2f | Train accuracy: %.2f%% | Train %s: %.4f" % (
                         np.mean(np.array(train_loss)), 
                         100*np.array(train_acc).mean(), self.metric, self.disparity(n_eyz)))
                 
@@ -938,7 +936,6 @@ class Server(object):
                     n_eyz[(e,y,z)] = n_eyz_[(e,y,z)]
         
         test_acc = sum([test_acc_list[z] * len(idx[z]) for z in range(self.Z)]) / sum([len(idx[z]) for z in range(self.Z)])
-
         rd = self.disparity(n_eyz)
 
         if self.prn:
