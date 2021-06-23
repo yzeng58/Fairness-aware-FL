@@ -222,7 +222,8 @@ class Client(object):
         random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        trainloader = DatasetSplit(self.dataset, self.idxs)      
+        idxs_train = self.idxs[:int(0.9*len(self.idxs))]
+        trainloader = DatasetSplit(self.dataset, idxs_train)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
         x = x.to(DEVICE)
 
@@ -495,9 +496,10 @@ class Client(object):
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
         x = x.to(DEVICE)
 
-        n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-        for y_, z_ in n_yz:
-            n_yz[(y_,z_)] = torch.sum((y == y_) & (z == z_)).item()
+        n_yz = {}
+        for y_ in [0,1]:
+            for z_ in range(self.Z):
+                n_yz[(y_,z_)] = torch.sum((y == y_) & (z == z_)).item()
 
         return n_yz
 
@@ -506,7 +508,7 @@ class Client(object):
         total, correct, acc_loss, adv_loss, num_batch = 0.0, 0.0, 0.0, 0.0, 0
         n_eyz = {}
         for y in [0,1]:
-            for z in [0,1]:
+            for z in range(self.Z):
                 for e in [0,1]:
                     n_eyz[(e,y,z)] = 0
         
@@ -538,7 +540,7 @@ class Client(object):
         accuracy = correct/total
         return accuracy, n_eyz, acc_loss / num_batch, adv_loss / num_batch
 
-    def inference(self, model):
+    def inference(self, model, train = False):
         """ 
         Returns the inference accuracy, 
                                 loss, 
@@ -559,8 +561,8 @@ class Client(object):
                 for e in [0,1]:
                     n_eyz[(e,y,z)] = 0
         
-        # dataset = self.validloader if option != "FairBatch" else self.dataset
-        for _, (features, labels, sensitive) in enumerate(self.validloader):
+        dataset = self.trainloader if train else self.validloader
+        for _, (features, labels, sensitive) in enumerate(dataset):
             features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
             sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
@@ -581,7 +583,6 @@ class Client(object):
                 group_boolean_idx[yz] = (labels == yz[0]) & (sensitive == yz[1])
                 if self.option == "FairBatch":
                 # the objective function have no lagrangian term
-
                     loss_yz_,_,_ = loss_func("FairBatch", logits[group_boolean_idx[yz]], 
                                                     labels[group_boolean_idx[yz]], 
                                          outputs[group_boolean_idx[yz]], sensitive[group_boolean_idx[yz]], 

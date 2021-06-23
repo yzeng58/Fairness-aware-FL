@@ -216,7 +216,8 @@ class Client(object):
         random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        trainloader = DatasetSplit(self.dataset, self.idxs)      
+        idxs_train = self.idxs[:int(0.9*len(self.idxs))]
+        trainloader = DatasetSplit(self.dataset, idxs_train)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
         x = x.to(DEVICE)
 
@@ -690,7 +691,7 @@ class Client(object):
 
         return n_yz
 
-    def inference(self, model):
+    def inference(self, model, train = False):
         """ 
         Returns the inference accuracy, 
                                 loss, 
@@ -710,8 +711,8 @@ class Client(object):
                 loss_yz[(y,z)] = 0
                 n_yz[(y,z)] = 0
         
-        # dataset = self.validloader if option != "FairBatch" else self.dataset
-        for _, (features, labels, sensitive) in enumerate(self.validloader):
+        dataset = self.validloader if not train else self.trainloader
+        for _, (features, labels, sensitive) in enumerate(dataset):
             features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
             sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
             
