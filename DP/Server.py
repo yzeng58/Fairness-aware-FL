@@ -1807,6 +1807,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd
 
+    # support z > 2
     def FBVariant4(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
         # new algorithm for demographic parity, add weights directly, signed gradient-based algorithm
         # set seed
@@ -1827,7 +1828,7 @@ class Server(object):
 
         for y in [0,1]:
             for z in range(self.Z):
-                lbd[(y,z)] = 0
+                lbd[(y,z)] = (m_yz[(1,z)] + m_yz[(0,z)])/len(self.train_dataset)
 
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses, nc = [], [], []
@@ -1843,7 +1844,7 @@ class Server(object):
                                         option = "FB-Variant1", lbd = lbd, 
                                         seed = self.seed, prn = self.train_prn, Z = self.Z)
 
-                w, loss, nc_ = local_model.fbc_update(
+                w, loss, nc_ = local_model.fb2_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
                                     learning_rate = learning_rate, local_epochs = local_epochs, 
                                     optimizer = optimizer, lbd = lbd, m_yz = m_yz)
@@ -1883,21 +1884,21 @@ class Server(object):
                 if self.prn: print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
                     c+1, acc_loss, fair_loss, self.metric, self.disparity(n_yz_c)))
                 
-            # update the lambda according to the paper -> see Section A.1 of FairBatch
-            # works well! The real batch size would be slightly different from the setting
             for y, z in loss_yz:
                 loss_yz[(y,z)] = loss_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
 
-            bias_norm, bias_z = 0, []
             for z in range(self.Z):
-                bias_z.append(loss_yz[(0,z)] - loss_yz[(1,z)])
-                bias_norm += bias_z[z] ** 2
-            bias_norm = bias_norm ** .5
-
-            for z in range(self.Z):
-                lbd[(0,z)] += (alpha / np.sqrt(round_ + 1) * bias_z[z] / bias_norm).item()
-
-            lbd[(0,z)] += alpha / np.sqrt(round_ + 1)
+                if z == 0:
+                    lbd[(0,z)] -= alpha / (round_ + 1) ** .5 * sum([(loss_yz[(0,0)] + loss_yz[(1,0)] - loss_yz[(0,z)] - loss_yz[(1,z)]) for z in range(self.Z)])
+                    lbd[(0,z)] = lbd[(0,z)].item()
+                    lbd[(0,z)] = max(0, min(lbd[(0,z)], 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset)))
+                    lbd[(1,z)] = 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset) - lbd[(0,z)]
+                else:
+                    lbd[(0,z)] += alpha / (round_ + 1) ** .5 * (loss_yz[(0,0)] + loss_yz[(1,0)] - loss_yz[(0,z)] - loss_yz[(1,z)])
+                    lbd[(0,z)] = lbd[(0,z)].item()
+                    lbd[(0,z)] = max(0, min(lbd[(0,z)], 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset)))
+                    lbd[(1,z)] = 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset) - lbd[(0,z)]
+            
             train_accuracy.append(sum(list_acc)/len(list_acc))
 
             # print global training loss after every 'i' rounds

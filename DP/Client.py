@@ -13,6 +13,8 @@ from torch.utils.data import DataLoader, Dataset
 from utils import *
 from fairBatch import *
 import torch.nn.functional as F
+from torch.autograd import Variable
+
 
 ################## MODEL SETTING ########################
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -624,7 +626,7 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc
 
-    def fbc_update(self, model, global_round, learning_rate, local_epochs, optimizer, lbd, m_yz):
+    def fb2_update(self, model, global_round, learning_rate, local_epochs, optimizer, lbd, m_yz):
         # Set mode to train model
         model.train()
         epoch_loss = []
@@ -649,18 +651,15 @@ class Client(object):
                 sensitive = sensitive.to(DEVICE)
                 _, logits = model(features)
 
-                v = torch.randn(len(labels)).type(torch.DoubleTensor)
+                v = torch.ones(len(labels)).type(torch.DoubleTensor)
                 
                 group_idx = {}
-                
                 for y, z in lbd:
                     group_idx[(y,z)] = torch.where((labels == y) & (sensitive == z))[0]
-                    v[group_idx[(y,z)]] = np.exp(lbd[(y,z)]) * sum([m_yz[(y,z)] for z in range(self.Z)]) / m_yz[(y,z)]
+                    v[group_idx[(y,z)]] = lbd[(y,z)] / (m_yz[(1,z)] + m_yz[(0,z)])
                     nc += v[group_idx[(y,z)]].sum().item()
 
-                # print(logits)
-                loss = weighted_loss(logits, labels, v)
-                # if global_round == 1: print(loss)
+                loss = weighted_loss(logits, labels, v, False)
 
                 optimizer.zero_grad()
                 if not np.isnan(loss.item()): loss.backward()
