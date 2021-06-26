@@ -733,7 +733,7 @@ class Client(object):
                 group_boolean_idx[yz] = (labels == yz[0]) & (sensitive == yz[1])
                 n_yz[yz] += torch.sum((pred_labels == yz[0]) & (sensitive == yz[1])).item()     
                 
-                if self.option == "FairBatch":
+                if self.option in["FairBatch", "FB-Variant1"]:
                 # the objective function have no lagrangian term
 
                     loss_yz_,_,_ = loss_func("FB_inference", logits[group_boolean_idx[yz]], 
