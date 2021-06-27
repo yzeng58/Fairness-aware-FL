@@ -1561,134 +1561,8 @@ class Server(object):
 
         if self.ret: return test_acc, rd  
 
-    # only support z == 2
-    def FBVariant2(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 1, alpha_decay = 0.5):
-        # new algorithm for demographic parity, draw minibatches
-        # set seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
-        # Training
-        train_loss, train_accuracy = [], []
-        start_time = time.time()
-        weights = self.model.state_dict()
-
-        # the number of samples whose label is y and sensitive attribute is z
-        m_yz = {(0,0): ((self.train_dataset.y == 0) & (self.train_dataset.sen == 0)).sum(),
-            (1,0): ((self.train_dataset.y == 1) & (self.train_dataset.sen == 0)).sum(),
-            (0,1): ((self.train_dataset.y == 0) & (self.train_dataset.sen == 1)).sum(),
-            (1,1): ((self.train_dataset.y == 1) & (self.train_dataset.sen == 1)).sum()}
-
-        lbd = {
-            (0,0): m_yz[(0,0)]/(m_yz[(1,0)] + m_yz[(0,0)]), 
-            (0,1): m_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)]),
-            (1,0): m_yz[(1,0)]/(m_yz[(1,0)] + m_yz[(0,0)]),
-            (1,1): m_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)]),
-        }
-
-        for round_ in tqdm(range(num_rounds)):
-            local_weights, local_losses = [], []
-            if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
-
-            self.model.train()
-            m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
-            idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
-
-            for idx in idxs_users:
-                local_model = Client(dataset=self.train_dataset,
-                                            idxs=self.clients_idx[idx], batch_size = self.batch_size, 
-                                        option = "FairBatch", lbd = lbd, 
-                                        seed = self.seed, prn = self.train_prn, Z = self.Z)
-
-                w, loss = local_model.standard_update(
-                                model=copy.deepcopy(self.model), global_round=round_, 
-                                    learning_rate = learning_rate, local_epochs = local_epochs, 
-                                    optimizer = optimizer)
-                local_weights.append(copy.deepcopy(w))
-                local_losses.append(copy.deepcopy(loss))
-
-            # update global weights
-            weights = average_weights(local_weights, self.clients_idx, idxs_users)
-            self.model.load_state_dict(weights)
-
-            loss_avg = sum(local_losses) / len(local_losses)
-            train_loss.append(loss_avg)
-
-            # Calculate avg training accuracy over all clients at every round
-            list_acc = []
-            # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-            loss_yz = {(0,0):0, (0,1):0, (1,0):0, (1,1):0}
-            self.model.eval()
-            for c in range(m):
-                local_model = Client(dataset=self.train_dataset,
-                                            idxs=self.clients_idx[c], batch_size = self.batch_size, option = "FairBatch", 
-                                            lbd = lbd, seed = self.seed, prn = self.train_prn, Z = self.Z)
-                # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model) 
-                list_acc.append(acc)
-                
-                for yz in n_yz:
-                    n_yz[yz] += n_yz_c[yz]
-                    loss_yz[yz] += loss_yz_c[yz]
-                    
-                if self.prn: print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
-                    c+1, acc_loss, fair_loss, self.metric, self.disparity(n_yz_c)))
-                
-            # update the lambda according to the paper -> see Section A.1 of FairBatch
-            # works well! The real batch size would be slightly different from the setting
-            loss_yz[(0,0)] = loss_yz[(0,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
-            loss_yz[(1,0)] = loss_yz[(1,0)]/(m_yz[(0,0)] + m_yz[(1,0)])
-            loss_yz[(0,1)] = loss_yz[(0,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
-            loss_yz[(1,1)] = loss_yz[(1,1)]/(m_yz[(0,1)] + m_yz[(1,1)])
-
-            y0_diff = loss_yz[(0,0)] - loss_yz[(0,1)]
-            y1_diff = loss_yz[(1,0)] - loss_yz[(1,1)]
-            if y0_diff > y1_diff:
-                lbd[(0,0)] -= alpha / (round_+1) ** .5 
-                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
-                lbd[(1,0)] = 1 - lbd[(0,0)]
-                lbd[(0,1)] += alpha / (round_+1) ** .5 
-                lbd[(0,1)] = min(max(0, lbd[(0,1)]), 1)
-                lbd[(1,1)] = 1 - lbd[(0,1)]
-            else:
-                lbd[(0,0)] += alpha / (round_+1) ** .5 
-                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
-                lbd[(0,1)] = 1 - lbd[(0,0)]
-                lbd[(1,0)] -= alpha / (round_+1) ** .5 
-                lbd[(1,0)] = min(max(0, lbd[(1,0)]), 1)
-                lbd[(1,1)] = 1 - lbd[(1,0)]
-
-            train_accuracy.append(sum(list_acc)/len(list_acc))
-
-            # print global training loss after every 'i' rounds
-            if self.prn:
-                if (round_+1) % self.print_every == 0:
-                    print(f' \nAvg Training Stats after {round_+1} global rounds:')
-                    print("Training loss: %.2f | Training accuracy: %.2f%% | Training %s: %.4f" % (
-                        np.mean(np.array(train_loss)), 
-                        100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
-
-            alpha = alpha_decay * alpha
-
-        # Test inference after completion of training
-        test_acc, n_yz = self.test_inference(self.model, self.test_dataset)
-        rd = self.disparity(n_yz)
-
-        if self.prn:
-            print(f' \n Results after {num_rounds} global rounds of training:')
-            print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
-            print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
-
-            # Compute fairness metric
-            print("|---- Test "+ self.metric+": {:.4f}".format(rd))
-
-            print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
-
-        if self.ret: return test_acc, rd
-
-    def FBVariant3(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
+    # support z > 2
+    def FBVariant2(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
         # new algorithm for demographic parity, add weights directly, signed gradient-based algorithm
         # set seed
         np.random.seed(self.seed)
@@ -1708,7 +1582,7 @@ class Server(object):
 
         for y in [0,1]:
             for z in range(self.Z):
-                lbd[(y,z)] = m_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
+                lbd[(y,z)] = (m_yz[(1,z)] + m_yz[(0,z)])/len(self.train_dataset)
 
         for round_ in tqdm(range(num_rounds)):
             local_weights, local_losses, nc = [], [], []
@@ -1724,7 +1598,7 @@ class Server(object):
                                         option = "FB-Variant1", lbd = lbd, 
                                         seed = self.seed, prn = self.train_prn, Z = self.Z)
 
-                w, loss, nc_ = local_model.fb_update(
+                w, loss, nc_ = local_model.fb2_update(
                                 model=copy.deepcopy(self.model), global_round=round_, 
                                     learning_rate = learning_rate, local_epochs = local_epochs, 
                                     optimizer = optimizer, lbd = lbd, m_yz = m_yz)
@@ -1751,10 +1625,10 @@ class Server(object):
             self.model.eval()
             for c in range(m):
                 local_model = Client(dataset=self.train_dataset,
-                                            idxs=self.clients_idx[c], batch_size = self.batch_size, option = "FairBatch", 
+                                            idxs=self.clients_idx[c], batch_size = self.batch_size, option = "FB-Variant1", 
                                             lbd = lbd, seed = self.seed, prn = self.train_prn, Z = self.Z)
                 # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model) 
+                acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model, train = True) 
                 list_acc.append(acc)
                 
                 for yz in n_yz:
@@ -1764,140 +1638,21 @@ class Server(object):
                 if self.prn: print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
                     c+1, acc_loss, fair_loss, self.metric, self.disparity(n_yz_c)))
                 
-            # update the lambda according to the paper -> see Section A.1 of FairBatch
-            # works well! The real batch size would be slightly different from the setting
             for y, z in loss_yz:
                 loss_yz[(y,z)] = loss_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
 
-            bias_norm, bias_z = 0, []
             for z in range(self.Z):
-                bias_z.append(loss_yz[(0,z)] - loss_yz[(1,z)])
-                bias_norm += bias_z[z] ** 2
-            bias_norm = bias_norm ** .5
-
-            for z in range(self.Z):
-                lbd[(0,z)] += (alpha / np.sqrt(round_ + 1) * bias_z[z] / bias_norm).item()
-                lbd[(0,z)] = min(max(0, lbd[(0,z)]), 1)
-                lbd[(1,z)] = 1 - lbd[(0,z)]
-
-            train_accuracy.append(sum(list_acc)/len(list_acc))
-
-            # print global training loss after every 'i' rounds
-            if self.prn:
-                if (round_+1) % self.print_every == 0:
-                    print(f' \nAvg Training Stats after {round_+1} global rounds:')
-                    print("Training loss: %.2f | Training accuracy: %.2f%% | Training %s: %.4f" % (
-                        np.mean(np.array(train_loss)), 
-                        100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
-
-
-        # Test inference after completion of training
-        test_acc, n_yz = self.test_inference(self.model, self.test_dataset)
-        rd = self.disparity(n_yz)
-
-        if self.prn:
-            print(f' \n Results after {num_rounds} global rounds of training:')
-            print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
-            print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
-
-            # Compute fairness metric
-            print("|---- Test "+ self.metric+": {:.4f}".format(rd))
-
-            print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
-
-        if self.ret: return test_acc, rd
-
-    def FBVariant4(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
-        # new algorithm for demographic parity, add weights directly, signed gradient-based algorithm
-        # set seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
-        # Training
-        train_loss, train_accuracy = [], []
-        start_time = time.time()
-        weights = self.model.state_dict()
-
-        # the number of samples whose label is y and sensitive attribute is z
-        m_yz, lbd = {}, {}
-        for y in [0,1]:
-            for z in range(self.Z):
-                m_yz[(y,z)] = ((self.train_dataset.y == y) & (self.train_dataset.sen == z)).sum()
-
-        for y in [0,1]:
-            for z in range(self.Z):
-                lbd[(y,z)] = 0
-
-        for round_ in tqdm(range(num_rounds)):
-            local_weights, local_losses, nc = [], [], []
-            if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
-
-            self.model.train()
-            m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
-            idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
-
-            for idx in idxs_users:
-                local_model = Client(dataset=self.train_dataset,
-                                            idxs=self.clients_idx[idx], batch_size = self.batch_size, 
-                                        option = "FB-Variant1", lbd = lbd, 
-                                        seed = self.seed, prn = self.train_prn, Z = self.Z)
-
-                w, loss, nc_ = local_model.fbc_update(
-                                model=copy.deepcopy(self.model), global_round=round_, 
-                                    learning_rate = learning_rate, local_epochs = local_epochs, 
-                                    optimizer = optimizer, lbd = lbd, m_yz = m_yz)
-                nc.append(nc_)
-                local_weights.append(copy.deepcopy(w))
-                local_losses.append(copy.deepcopy(loss))
-
-            # update global weights
-            weights = weighted_average_weights(local_weights, nc, sum(nc))
-            self.model.load_state_dict(weights)
-
-            loss_avg = sum(local_losses) / len(local_losses)
-            train_loss.append(loss_avg)
-
-            # Calculate avg training accuracy over all clients at every round
-            list_acc = []
-            # the number of samples which are assigned to class y and belong to the sensitive group z
-            n_yz, loss_yz = {}, {}
-            for y in [0,1]:
-                for z in range(self.Z):
-                    n_yz[(y,z)] = 0
-                    loss_yz[(y,z)] = 0
-
-            self.model.eval()
-            for c in range(m):
-                local_model = Client(dataset=self.train_dataset,
-                                            idxs=self.clients_idx[c], batch_size = self.batch_size, option = "FairBatch", 
-                                            lbd = lbd, seed = self.seed, prn = self.train_prn, Z = self.Z)
-                # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, loss_yz_c = local_model.inference(model = self.model) 
-                list_acc.append(acc)
-                
-                for yz in n_yz:
-                    n_yz[yz] += n_yz_c[yz]
-                    loss_yz[yz] += loss_yz_c[yz]
-                    
-                if self.prn: print("Client %d: accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
-                    c+1, acc_loss, fair_loss, self.metric, self.disparity(n_yz_c)))
-                
-            # update the lambda according to the paper -> see Section A.1 of FairBatch
-            # works well! The real batch size would be slightly different from the setting
-            for y, z in loss_yz:
-                loss_yz[(y,z)] = loss_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
-
-            bias_norm, bias_z = 0, []
-            for z in range(self.Z):
-                bias_z.append(loss_yz[(0,z)] - loss_yz[(1,z)])
-                bias_norm += bias_z[z] ** 2
-            bias_norm = bias_norm ** .5
-
-            for z in range(self.Z):
-                lbd[(0,z)] += (alpha / np.sqrt(round_ + 1) * bias_z[z] / bias_norm).item()
-
-            lbd[(0,z)] += alpha / np.sqrt(round_ + 1)
+                if z == 0:
+                    lbd[(0,z)] -= alpha / (round_ + 1) ** .5 * sum([(loss_yz[(0,0)] + loss_yz[(1,0)] - loss_yz[(0,z)] - loss_yz[(1,z)]) for z in range(self.Z)])
+                    lbd[(0,z)] = lbd[(0,z)].item()
+                    lbd[(0,z)] = max(0, min(lbd[(0,z)], 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset)))
+                    lbd[(1,z)] = 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset) - lbd[(0,z)]
+                else:
+                    lbd[(0,z)] += alpha / (round_ + 1) ** .5 * (loss_yz[(0,0)] + loss_yz[(1,0)] - loss_yz[(0,z)] - loss_yz[(1,z)])
+                    lbd[(0,z)] = lbd[(0,z)].item()
+                    lbd[(0,z)] = max(0, min(lbd[(0,z)], 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset)))
+                    lbd[(1,z)] = 2*(m_yz[(1,0)]+m_yz[(0,0)])/len(self.train_dataset) - lbd[(0,z)]
+            
             train_accuracy.append(sum(list_acc)/len(list_acc))
 
             # print global training loss after every 'i' rounds

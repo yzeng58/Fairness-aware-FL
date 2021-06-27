@@ -203,10 +203,13 @@ def zafar_loss(logits, targets, outputs, sensitive, larg, mean_z, left):
     else:
         return acc_loss + larg * fair_loss
 
-def weighted_loss(logits, targets, weights):
+def weighted_loss(logits, targets, weights, mean = True):
     acc_loss = F.cross_entropy(logits, targets, reduction = 'none')
-    weights_sum = weights.sum().item()
-    acc_loss = torch.sum(acc_loss * weights / weights_sum)
+    if mean:
+        weights_sum = weights.sum().item()
+        acc_loss = torch.sum(acc_loss * weights / weights_sum)
+    else:
+        acc_loss = torch.sum(acc_loss * weights)
     return acc_loss
     
 def al_loss(logits, targets, adv_logits, adv_targets):
