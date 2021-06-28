@@ -237,18 +237,25 @@ def Z_MEAN(x):
         multivariate_normal.pdf(x_transform, mean = X_DIST[1]["mean"], cov = X_DIST[1]["cov"]) + 
         multivariate_normal.pdf(x_transform, mean = X_DIST[0]["mean"], cov = X_DIST[0]["cov"])
     )
-########################
-
-# 3 clients: 
-#           client 1: %50 z = 1, %20 z = 0
-#           client 2: %30 z = 1, %40 z = 0
-#           client 3: %20 z = 1, %40 z = 0
 
 def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500, 
-                y_mean = 0.6, client_split = ((.5, .2), (.3, .4), (.2, .4))):
+                y_mean = 0.6, client_split = ((.5, .2), (.3, .4), (.2, .4)), Z = 2):
     """
     Generate dataset consisting of two sensitive groups.
     """
+    ########################
+    # Z = 2:
+    # 3 clients: 
+    #           client 1: %50 z = 1, %20 z = 0
+    #           client 2: %30 z = 1, %40 z = 0
+    #           client 3: %20 z = 1, %40 z = 0
+    ########################
+    # 4 clients:
+    #           client 1: 50% z = 0, 10% z = 1, 20% z = 2
+    #           client 2: 30% z = 0, 30% z = 1, 30% z = 2
+    #           client 3: 10% z = 0, 30% z = 1, 30% z = 2
+    #           client 4: 10% z = 0, 30% z = 1, 20% z = 2
+    ########################
     np.random.seed(seed)
     random.seed(seed)
         
@@ -257,29 +264,59 @@ def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500,
 
     xs, zs = [], []
 
-    for y in ys:
-        x = np.random.multivariate_normal(mean = X_DIST[y]["mean"], cov = X_DIST[y]["cov"], size = 1)[0]
-        z = np.random.binomial(n = 1, p = Z_MEAN(x), size = 1)[0]
-        xs.append(x)
-        zs.append(z)
+    if Z == 2:
+        for y in ys:
+            x = np.random.multivariate_normal(mean = X_DIST[y]["mean"], cov = X_DIST[y]["cov"], size = 1)[0]
+            z = np.random.binomial(n = 1, p = Z_MEAN(x), size = 1)[0]
+            xs.append(x)
+            zs.append(z)
+    elif Z == 3:
+        for y in ys:
+            x = np.random.multivariate_normal(mean = X_DIST[y]["mean"], cov = X_DIST[y]["cov"], size = 1)[0]
+            # Z = 3: 0.7 y = 1, 0.3 y = 1 + 0.3 y = 0, 0.7 y = 0
+            py1 = multivariate_normal.pdf(x, mean = X_DIST[1]["mean"], cov = X_DIST[1]["cov"])
+            py0 = multivariate_normal.pdf(x, mean = X_DIST[0]["mean"], cov = X_DIST[0]["cov"])
+            p = np.array([0.7 * py1, 0.3 * py1 + 0.3 * py0, 0.7 * py0]) / (py1+py0)
+            z = np.random.choice([0,1,2], size = 1, p = p)[0]
+            xs.append(x)
+            zs.append(z)
 
     data = pd.DataFrame(zip(np.array(xs).T[0], np.array(xs).T[1], ys, zs), columns = ["x1", "x2", "y", "z"])
     # data = data.sample(frac=1).reset_index(drop=True)
     train_data = data[:train_samples]
     test_data = data[train_samples:]
     
-    z1_idx = train_data[train_data.z == 1].index
-    z0_idx = train_data[train_data.z == 0].index
+    if Z == 2:
+        z1_idx = train_data[train_data.z == 1].index
+        z0_idx = train_data[train_data.z == 0].index
 
-    client1_idx = np.concatenate((z1_idx[:int(client_split[0][0]*len(z1_idx))], z0_idx[:int(client_split[0][1]*len(z0_idx))]))
-    client2_idx = np.concatenate((z1_idx[int(client_split[0][0]*len(z1_idx)):int((client_split[0][0] + client_split[1][0])*len(z1_idx))],
-                                  z0_idx[int(client_split[0][1]*len(z0_idx)):int((client_split[0][1] + client_split[1][1])*len(z0_idx))]))
-    client3_idx = np.concatenate((z1_idx[int((client_split[0][0] + client_split[1][0])*len(z1_idx)):], z0_idx[int((client_split[0][1] + client_split[1][1])*len(z0_idx)):]))
-    random.shuffle(client1_idx)
-    random.shuffle(client2_idx)
-    random.shuffle(client3_idx)
+        client1_idx = np.concatenate((z1_idx[:int(client_split[0][0]*len(z1_idx))], z0_idx[:int(client_split[0][1]*len(z0_idx))]))
+        client2_idx = np.concatenate((z1_idx[int(client_split[0][0]*len(z1_idx)):int((client_split[0][0] + client_split[1][0])*len(z1_idx))],
+                                      z0_idx[int(client_split[0][1]*len(z0_idx)):int((client_split[0][1] + client_split[1][1])*len(z0_idx))]))
+        client3_idx = np.concatenate((z1_idx[int((client_split[0][0] + client_split[1][0])*len(z1_idx)):], z0_idx[int((client_split[0][1] + client_split[1][1])*len(z0_idx)):]))
+        random.shuffle(client1_idx)
+        random.shuffle(client2_idx)
+        random.shuffle(client3_idx)
 
-    clients_idx = [client1_idx, client2_idx, client3_idx]
+        clients_idx = [client1_idx, client2_idx, client3_idx]
+        
+    elif Z == 3:
+        z_idx, z_len = [], []
+        for z in range(3):
+            z_idx.append(train_data[train_data.z == z].index)
+            z_len.append(len(z_idx[z]))
+
+        clients_idx = []
+        a, b = np.zeros(3), np.zeros(3)
+        for c in range(4):
+            if c > 0:
+                a += np.array(client_split[c-1]) * z_len 
+            b += np.array(client_split[c]) * z_len
+            clients_idx.append(np.concatenate((z_idx[0][int(a[0]):int(b[0])],
+                                               z_idx[1][int(a[1]):int(b[1])],
+                                               z_idx[2][int(a[2]):int(b[2])])))
+            random.shuffle(clients_idx[c])
+        
     train_dataset = LoadData(train_data, "y", "z")
     test_dataset = LoadData(test_data, "y", "z")
 
