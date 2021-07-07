@@ -244,7 +244,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd
 
-    def FairBatch(self, num_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
+    def FairBatch(self, num_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3, trace = False):
         # set seed
         np.random.seed(self.seed)
         random.seed(self.seed)
@@ -271,6 +271,7 @@ class Server(object):
         for z in range(self.Z):
             lbd.append(m_1z[z]/len(self.train_dataset.y))
 
+        if trace: acc_l, dp_l = [], []
         for round_ in tqdm(range(num_epochs)):
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
 
@@ -343,6 +344,12 @@ class Server(object):
                         np.mean(np.array(train_loss)), 
                         100*train_accuracy[-1], self.metric, self.disparity(n_eyz)))
 
+            if trace and ((round_+1) % trace == 0) and (round_ >= 200):
+                test_acc, n_yz = self.test_inference(self.model, self.test_dataset)
+                rd = self.disparity(n_yz)
+                acc_l.append(test_acc)
+                dp_l.append(rd)
+
         # Test inference after completion of training
         test_acc, n_eyz = self.test_inference(self.model, self.test_dataset)
         rd = self.disparity(n_eyz)
@@ -357,7 +364,11 @@ class Server(object):
 
             print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
 
-        if self.ret: return test_acc, rd
+        if self.ret: 
+            if trace:
+                return acc_l, dp_l
+            else:
+                return test_acc, rd
 
     def BiasCorrecting(self, num_epochs = 30, learning_rate = 0.005, alpha = 0.1, 
                     optimizer = "adam"):

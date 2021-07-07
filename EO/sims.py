@@ -8,7 +8,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
           local_epochs = 40, alpha = 1, option = "FairBatch",
           optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
           adjusting_alpha = 0.7, epsilon = 0.02, test_lr = 0.01, test_rounds = 3, test_penalty = 10, 
-          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, adaptive_lr = True, lambda_d = 0.8, adaptive_penalty = True, fixed_dataset = None):
+          lr_g = 0.005, lr_d = 0.01, init_epochs = 50, adaptive_lr = True, lambda_d = 0.8, adaptive_penalty = True, fixed_dataset = None, trace = False):
     """
     Run simulations.
     """
@@ -40,7 +40,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
 
         elif option == 'FairBatch':
             test_acc_i, rd_i = server.FairBatch(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
-                optimizer = optimizer, alpha = alpha)
+                optimizer = optimizer, alpha = alpha, trace = trace)
 
         elif option == 'bias correcting':
             test_acc_i, rd_i = server.BiasCorrecting(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
@@ -70,10 +70,18 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         test_acc.append(test_acc_i)
         rd.append(rd_i)
         
-        print("      Accuracy: %.2f%%  %s: %.2f" % (test_acc_i * 100, "Equal Opportunity Disparity", rd_i))
+        if not trace:
+            print("      Accuracy: %.2f%%  %s: %.2f" % (test_acc_i * 100, metric, rd_i))
+        else:
+            print(test_acc_i)
+            print(rd_i)
         
-    mean_acc, std_acc, mean_rd, std_rd = np.mean(test_acc), np.std(test_acc), np.mean(rd), np.std(rd)
-    print("| Test Accuracy: %.3f(%.3f) | %s: %.3f(%.3f) |" % (mean_acc, std_acc, "Equal Opportunity Disparity", mean_rd, std_rd))
-    
-    print("| Time elapsed: %.2f seconds |" % (time.time() - start))
-    return mean_acc, std_acc, mean_rd, std_rd
+    if trace:
+        test_acc, rd = np.array(test_acc), np.array(rd)
+        mean_acc, mean_rd = test_acc.mean(axis = 0), rd.mean(axis = 0)
+        return mean_acc.tolist(), mean_rd.tolist()
+    else:
+        mean_acc, std_acc, mean_rd, std_rd = np.mean(test_acc), np.std(test_acc), np.mean(rd), np.std(rd)
+        print("| Test Accuracy: %.3f(%.3f) | %s: %.3f(%.3f) |" % (mean_acc, std_acc, metric, mean_rd, std_rd))
+        print("| Time elapsed: %.2f seconds |" % (time.time() - start))
+        return mean_acc, std_acc, mean_rd, std_rd
