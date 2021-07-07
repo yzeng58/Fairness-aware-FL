@@ -217,6 +217,7 @@ def al_loss(logits, targets, adv_logits, adv_targets):
     adv_loss = F.cross_entropy(adv_logits, adv_targets)
     return acc_loss, adv_loss
 
+
 ## Synthetic data generation ##
 ########################
 ####### setting ########
@@ -238,27 +239,8 @@ def Z_MEAN(x):
         multivariate_normal.pdf(x_transform, mean = X_DIST[0]["mean"], cov = X_DIST[0]["cov"])
     )
 
-def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500, 
-                y_mean = 0.6, client_split = ((.5, .2), (.3, .4), (.2, .4)), Z = 2):
-    """
-    Generate dataset consisting of two sensitive groups.
-    """
-    ########################
-    # Z = 2:
-    # 3 clients: 
-    #           client 1: %50 z = 1, %20 z = 0
-    #           client 2: %30 z = 1, %40 z = 0
-    #           client 3: %20 z = 1, %40 z = 0
-    ########################
-    # 4 clients:
-    #           client 1: 50% z = 0, 10% z = 1, 20% z = 2
-    #           client 2: 30% z = 0, 30% z = 1, 30% z = 2
-    #           client 3: 10% z = 0, 30% z = 1, 30% z = 2
-    #           client 4: 10% z = 0, 30% z = 1, 20% z = 2
-    ########################
-    np.random.seed(seed)
-    random.seed(seed)
-        
+def dataSample(train_samples = 3000, test_samples = 500, 
+                y_mean = 0.6, Z = 2):
     num_samples = train_samples + test_samples
     ys = np.random.binomial(n = 1, p = y_mean, size = num_samples)
 
@@ -285,7 +267,9 @@ def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500,
     # data = data.sample(frac=1).reset_index(drop=True)
     train_data = data[:train_samples]
     test_data = data[train_samples:]
-    
+    return train_data, test_data
+
+def dataSplit(train_data, test_data, client_split = ((.5, .2), (.3, .4), (.2, .4)), Z = 2):
     if Z == 2:
         z1_idx = train_data[train_data.z == 1].index
         z0_idx = train_data[train_data.z == 0].index
@@ -322,6 +306,30 @@ def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500,
 
     synthetic_info = [train_dataset, test_dataset, clients_idx]
     return synthetic_info
+
+def dataGenerate(seed = 432, train_samples = 3000, test_samples = 500, 
+                y_mean = 0.6, client_split = ((.5, .2), (.3, .4), (.2, .4)), Z = 2):
+    """
+    Generate dataset consisting of two sensitive groups.
+    """
+    ########################
+    # Z = 2:
+    # 3 clients: 
+    #           client 1: %50 z = 1, %20 z = 0
+    #           client 2: %30 z = 1, %40 z = 0
+    #           client 3: %20 z = 1, %40 z = 0
+    ########################
+    # 4 clients:
+    #           client 1: 50% z = 0, 10% z = 1, 20% z = 2
+    #           client 2: 30% z = 0, 30% z = 1, 30% z = 2
+    #           client 3: 10% z = 0, 30% z = 1, 30% z = 2
+    #           client 4: 10% z = 0, 30% z = 1, 20% z = 2
+    ########################
+    np.random.seed(seed)
+    random.seed(seed)
+        
+    train_data, test_data = dataSample(train_samples, test_samples, y_mean, Z)
+    return dataSplit(train_data, test_data, client_split, Z)
 
 def process_csv(dir_name, filename, label_name, favorable_class, sensitive_attributes, privileged_classes, categorical_attributes, continuous_attributes, features_to_keep, na_values = [], header = 'infer', columns = None):
     """

@@ -716,7 +716,7 @@ class Server(object):
         if self.ret: return test_acc, rd
 
     # only support z == 2
-    def FairBatch(self, num_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3):
+    def FairBatch(self, num_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3, trace = False):
         # new algorithm for demographic parity, add weights directly, signed gradient-based algorithm
         # set seed
         np.random.seed(self.seed)
@@ -726,7 +726,6 @@ class Server(object):
         # Training
         train_loss, train_accuracy = [], []
         start_time = time.time()
-        weights = self.model.state_dict()
 
         # Set optimizer for the local updates
         if optimizer == 'sgd':
@@ -745,6 +744,8 @@ class Server(object):
         for y in [0,1]:
             for z in range(self.Z):
                 lbd[(y,z)] = m_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
+
+        if trace: acc_l, dp_l = [], []
 
         for round_ in tqdm(range(num_epochs)):
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
@@ -826,6 +827,11 @@ class Server(object):
                         np.mean(np.array(train_loss)), 
                         100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
 
+            if trace and ((round_+1) % trace == 0) and (round_ >= 30):
+                test_acc, n_yz = self.test_inference(self.model, self.test_dataset)
+                rd = self.disparity(n_yz)
+                acc_l.append(test_acc)
+                dp_l.append(rd)
 
         # Test inference after completion of training
         test_acc, n_yz = self.test_inference(self.model, self.test_dataset)
@@ -841,7 +847,11 @@ class Server(object):
 
             print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
 
-        if self.ret: return test_acc, rd
+        if self.ret: 
+            if trace:
+                return acc_l, dp_l
+            else:
+                return test_acc, rd
 
     def test_inference(self, model = None, test_dataset = None):
 
