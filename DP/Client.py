@@ -676,6 +676,85 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc
 
+    def local_fb(self, model, learning_rate, local_epochs, optimizer, alpha, lbd = None, m_yz = None):
+        # Set mode to train model
+        epoch_loss = []
+        nc = 0
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # Set optimizer for the local updates
+        if optimizer == 'sgd':
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
+                                        momentum=0.5) # 
+        elif optimizer == 'adam':
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                        weight_decay=1e-4)
+        
+        if lbd == None:
+            m_yz, lbd = {}, {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    m_yz[(y,z)] = ((self.dataset.y == y) & (self.dataset.sen == z)).sum()
+
+            for y in [0,1]:
+                for z in range(self.Z):
+                    lbd[(y,z)] = m_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
+
+        for epoch in range(local_epochs):
+            model.train()
+            batch_loss = []
+            for _, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+                _, logits = model(features)
+
+                v = torch.ones(len(labels)).type(torch.DoubleTensor)
+                
+                group_idx = {}
+                for y, z in lbd:
+                    group_idx[(y,z)] = torch.where((labels == y) & (sensitive == z))[0]
+                    v[group_idx[(y,z)]] = lbd[(y,z)] / (m_yz[(1,z)] + m_yz[(0,z)])
+                    nc += v[group_idx[(y,z)]].sum().item()
+
+                loss = weighted_loss(logits, labels, v, False)
+
+                optimizer.zero_grad()
+                if not np.isnan(loss.item()): loss.backward()
+                optimizer.step()
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+            model.eval()
+            # validation dataset inference
+            _, _, _, _, _, loss_yz = self.inference(model = model, train = True) 
+
+            for y, z in loss_yz:
+                loss_yz[(y,z)] = loss_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
+
+            y0_diff = loss_yz[(0,0)] - loss_yz[(0,1)]
+            y1_diff = loss_yz[(1,0)] - loss_yz[(1,1)]
+            if y0_diff > y1_diff:
+                lbd[(0,0)] -= alpha / (epoch+1)
+                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
+                lbd[(1,0)] = 1 - lbd[(0,0)]
+                lbd[(0,1)] += alpha / (epoch+1)
+                lbd[(0,1)] = min(max(0, lbd[(0,1)]), 1)
+                lbd[(1,1)] = 1 - lbd[(0,1)]
+            else:
+                lbd[(0,0)] += alpha / (epoch+1)
+                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
+                lbd[(0,1)] = 1 - lbd[(0,0)]
+                lbd[(1,0)] -= alpha / (epoch+1)
+                lbd[(1,0)] = min(max(0, lbd[(1,0)]), 1)
+                lbd[(1,1)] = 1 - lbd[(1,0)]
+
+        # weight, loss
+        return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc, lbd, m_yz
+
     def get_n_yz(self):
         trainloader = DatasetSplit(self.dataset, self.idxs)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)

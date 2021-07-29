@@ -545,6 +545,90 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc
 
+    def local_fb(self, model, learning_rate, local_epochs, optimizer, alpha, lbd = None, m_1z = None):
+        # Set mode to train model
+        model.train()
+        epoch_loss = []
+        nc = 0
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # Set optimizer for the local updates
+        if optimizer == 'sgd':
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
+                                        momentum=0.5) # 
+        elif optimizer == 'adam':
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                        weight_decay=1e-4)
+
+        if lbd == None:
+            m_1z = []
+            for z in range(self.Z):
+                m_1z.append(((self.dataset.y == 1) & (self.dataset.sen == z)).sum())
+
+            lbd = []
+            for z in range(self.Z):
+                lbd.append(m_1z[z]/len(self.dataset.y))
+
+        m = len(self.dataset)
+        for epoch in range(local_epochs):
+            batch_loss = []
+            loss_yz = {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    loss_yz[(y,z)] = 0
+            for _, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+                _, logits = model(features)
+
+                v = torch.randn(len(labels)).type(torch.DoubleTensor)
+                
+                group_idx = {}
+                
+                for z in range(self.Z):
+                    group_idx[(0,z)] = torch.where((labels == 0) & (sensitive == z))[0]
+                    group_idx[(1,z)] = torch.where((labels == 1) & (sensitive == z))[0]
+                    v[group_idx[(0,z)]] = 1
+                    v[group_idx[(1,z)]] = lbd[z] * m / m_1z[z]
+                    nc += v[group_idx[(0,z)]].sum().item() + v[group_idx[(1,z)]].sum().item()
+                    loss_yz[(y,z)] += weighted_loss(logits[group_idx[(y,z)]], labels[group_idx[(y,z)]], v[group_idx[(y,z)]], False)
+
+                loss = weighted_loss(logits, labels, v)
+                # if global_round == 1: print(loss)
+
+                optimizer.zero_grad()
+                if not np.isnan(loss.item()): loss.backward()
+                optimizer.step()
+
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+            max_bias, z_selected = 0, 0
+            for z in range(self.Z):
+                z_ = (z + 1) % self.Z
+                bias_z = abs(loss_yz[(1,z)]/m_1z[z] - loss_yz[(1,z_)]/m_1z[z_])
+                if bias_z > max_bias:
+                    if loss_yz[(1,z)]/m_1z[z] > loss_yz[(1,z_)]/m_1z[z_]:
+                        z_selected = z
+                    else:
+                        z_selected = z_
+                    max_bias = bias_z
+
+            for z in range(self.Z):
+                if z == z_selected:
+                    lbd[z_selected] += alpha / (epoch + 1)
+                else:
+                    m1z_ = copy.deepcopy(m_1z)
+                    m1z_.pop(z_selected)
+                    lbd[z] -= alpha / (epoch + 1) * m_1z[z] / sum(m1z_)
+
+        # weight, loss
+        return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc, lbd, m_1z
+
     def get_n_yz(self):
         trainloader = DatasetSplit(self.dataset, self.idxs)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)

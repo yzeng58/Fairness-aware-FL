@@ -366,3 +366,28 @@ def process_csv(dir_name, filename, label_name, favorable_class, sensitive_attri
         df['z'] = df[sensitive_attributes[0]].astype('category').cat.codes
     df = df.drop(columns = sensitive_attributes)
     return df
+
+def nsfData(q = (0.99, 0.01), theta = (0.38/0.99, -0.5), train_samples = 3000, test_samples = 300, seed = 123):
+    np.random.seed(seed)
+    random.seed(seed)
+    clients_idx = [np.arange(0,train_samples//2,1), np.arange(train_samples//2, train_samples//2*2, 1)]
+    train_data, test_data = [], []
+
+    for c in range(2):
+        a = np.random.binomial(n = 1, p = q[c], size = train_samples//2 + test_samples//2)
+        def prod_x(a):
+            if a:
+                return np.random.binomial(n=1, p=1/2+theta[c], size=1)
+            else:
+                return np.random.binomial(n=1, p=1/2, size=1)
+        prod_x_v = np.vectorize(prod_x)
+        x = prod_x_v(a)
+        y = copy.deepcopy(x)
+        data = pd.DataFrame(zip(x,a,y), columns = ["x", "a", "y"])
+        train_data.append(data[:train_samples//2])
+        test_data.append(data[train_samples//2:])
+    train_data = pd.concat(train_data).reset_index(drop=True)
+    test_data = pd.concat(test_data).reset_index(drop=True)
+    train_dataset = LoadData(train_data, "y", "a")
+    test_dataset = LoadData(test_data, "y", "a")
+    return [train_dataset, test_dataset, clients_idx]

@@ -6,7 +6,7 @@ import time
 
 def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 5, 
           local_epochs = 40, alpha = 1, metric = "Demographic disparity", adaptive_alpha = True, option = "FairBatch",
-          optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
+          optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, Z = 2,
           adjusting_alpha = 0.7, epsilon = 0.02, adaptive_lr = True, test_lr = 0.01, test_rounds = 3,
           lr_g = 0.005, lr_d = 0.01, init_epochs = 50, lambda_d = 0.8, bs_iter = 10, alpha_decay = 0.5, fixed_dataset = None, trace = False, client_split = ((.5, .2), (.3, .4), (.2, .4))):
     """
@@ -15,7 +15,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
     
     test_acc, rd = [], []
     start = time.time()
-    if fixed_dataset: synthetic_info = dataGenerate(seed = fixed_dataset, train_samples = train_samples, test_samples = test_samples, client_split = client_split)
+    if fixed_dataset: synthetic_info = dataGenerate(seed = fixed_dataset, train_samples = train_samples, test_samples = test_samples, client_split = client_split, Z = Z)
     for i in range(num_sim):
         seed = int(time.time()%1000)
         print("|  Simulation : %d | " % (i+1))
@@ -33,7 +33,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
 
         elif option == 'local zafar':
             test_acc_i, rd_i = server.LocalZafar(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
-                optimizer = optimizer, penalty = penalty, epsilon = epsilon)
+                optimizer = optimizer, penalty = penalty, epsilon = epsilon, trace = trace)
 
         elif option == 'threshold adjusting':
             server.Unconstrained(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
@@ -80,7 +80,11 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
 
         elif option == 'fb-variant2':
             test_acc_i, rd_i = server.FBVariant2(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
-                optimizer = optimizer, alpha = alpha, alpha_decay = alpha_decay)
+                optimizer = optimizer, alpha = alpha)
+
+        elif option == 'localfb':
+            test_acc_i, rd_i = server.LocalFB(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, alpha = alpha, trace = trace)
 
         else:
             print('Approach %s is not supported!' % option)
