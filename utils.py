@@ -130,6 +130,9 @@ def EODisparity(n_eyz, each_z = False):
             eod.append(eod_z)
         return eod
 
+# def mutual_information(n_yz, u = 0):
+#     # u = 0 : demographic parity 
+
 def average_weights(w, clients_idx, idx_users):
     """
     Returns the average of the weights.
@@ -216,7 +219,6 @@ def al_loss(logits, targets, adv_logits, adv_targets):
     acc_loss = F.cross_entropy(logits, targets, reduction = 'sum')
     adv_loss = F.cross_entropy(adv_logits, adv_targets)
     return acc_loss, adv_loss
-
 
 ## Synthetic data generation ##
 ########################
@@ -370,16 +372,16 @@ def process_csv(dir_name, filename, label_name, favorable_class, sensitive_attri
 def nsfData(q = (0.99, 0.01), theta = (0.38/0.99, -0.5), train_samples = 3000, test_samples = 300, seed = 123):
     np.random.seed(seed)
     random.seed(seed)
-    clients_idx = [np.arange(0,train_samples//2,1), np.arange(train_samples//2, train_samples//2*2, 1)]
+    clients_idx = []
     train_data, test_data = [], []
 
     for c in range(2):
         a = np.random.binomial(n = 1, p = q[c], size = train_samples//2 + test_samples//2)
         def prod_x(a):
             if a:
-                return np.random.binomial(n=1, p=1/2+theta[c], size=1)
+                return np.random.binomial(n=1, p=1/2+theta[c], size=1)[0]
             else:
-                return np.random.binomial(n=1, p=1/2, size=1)
+                return np.random.binomial(n=1, p=1/2, size=1)[0]
         prod_x_v = np.vectorize(prod_x)
         x = prod_x_v(a)
         y = copy.deepcopy(x)
@@ -388,6 +390,11 @@ def nsfData(q = (0.99, 0.01), theta = (0.38/0.99, -0.5), train_samples = 3000, t
         test_data.append(data[train_samples//2:])
     train_data = pd.concat(train_data).reset_index(drop=True)
     test_data = pd.concat(test_data).reset_index(drop=True)
+    train_data = train_data.sample(frac = 1)
+    test_data = test_data.sample(frac = 1).reset_index(drop=True)
+    clients_idx.append(np.where(train_data.index < train_samples//2)[0])
+    clients_idx.append(np.where(train_data.index >= train_samples//2)[0])
+    train_data = train_data.reset_index(drop=True)
     train_dataset = LoadData(train_data, "y", "a")
     test_dataset = LoadData(test_data, "y", "a")
     return [train_dataset, test_dataset, clients_idx]

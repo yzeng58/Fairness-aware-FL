@@ -755,6 +755,63 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc, lbd, m_yz
 
+    def local_ft(self, model, global_round, local_epochs = 30, lr_g = 0.005, lr_d = 0.01, num_classes = 2, ratio_gd = 3,
+                 lambda_d = 0.2, init_epochs = 100, discriminator_para = None):
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+        # discriminator: estimate the sensitive attribute
+        discriminator = logReg(num_classes, self.Z)
+        if discriminator_para: discriminator.load_state_dict(discriminator_para)
+
+        generator = model
+
+        # Set optimizer for the local updates
+        optimizer_G = torch.optim.Adam(generator.parameters(), lr = lr_g)
+        optimizer_D = torch.optim.SGD(discriminator.parameters(), lr = lr_d)
+        
+        for i in range(local_epochs):
+            epoch = global_round * local_epochs + i
+            if self.prn and epoch % 50 == 0: print(f'\n | Global Training Round : {epoch+1} |\n')
+
+            model.train()
+            for _, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
+
+                # for the first 100 epochs, train both generator and discriminator
+                # after the first 100 epochs, ratio of updating generator and discriminator (1:ratio_gd training)
+                if epoch % ratio_gd == 0 or epoch < init_epochs:
+                    # forward generator
+                    optimizer_G.zero_grad()
+                
+                _, logits_g = generator(features)
+
+                # train fairness discriminator
+                optimizer_D.zero_grad()
+                loss_d = F.cross_entropy(discriminator(logits_g.detach())[1], sensitive)
+                loss_d.backward()
+                optimizer_D.step()
+
+                loss_g = F.cross_entropy(logits_g, labels)
+                # update generator
+                if epoch < init_epochs:
+                    loss_g.backward()
+                    optimizer_G.step()
+
+                elif epoch % ratio_gd == 0:
+                    _, logits_d = discriminator(logits_g)
+                    loss_d = F.cross_entropy(logits_d, sensitive)
+                    
+                    loss = (1-lambda_d) * loss_g - lambda_d * loss_d
+                    loss.backward()
+                    optimizer_G.step()
+
+            # Calculate avg training accuracy over all clients at every round
+            # the number of samples which are assigned to class y and belong to the sensitive group z
+        return generator.state_dict(), discriminator.state_dict()
+            
     def get_n_yz(self):
         trainloader = DatasetSplit(self.dataset, self.idxs)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)
