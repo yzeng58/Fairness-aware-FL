@@ -5,7 +5,7 @@ from DPFair import *
 import time
 
 def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_epochs = 300, alpha = 1, option = "FairBatch",
-          optimizer = 'adam', fixed_dataset = None, trace = False):
+          optimizer = 'adam', fixed_dataset = None, trace = False, epsilon = None, penalty = 500):
     """
     Run simulations.
     """
@@ -28,6 +28,10 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
             test_acc_i, rd_i = server.FairBatch(num_epochs = num_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, alpha = alpha, trace = trace)
 
+        elif option == 'FC':
+            test_acc_i, rd_i = server.FairConstraints(num_epochs = num_epochs, learning_rate = learning_rate, penalty = penalty,
+                optimizer = optimizer, epsilon = epsilon, trace = trace)
+
         else:
             print('Approach %s is not supported!' % option)
             return None
@@ -36,7 +40,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         rd.append(rd_i)
         
         if not trace:
-            print("      Accuracy: %.2f%%  %s: %.2f" % (test_acc_i * 100, metric, rd_i))
+            print("      Accuracy: %.2f%%  %s: %.2f" % (test_acc_i * 100, "EO Disparity", rd_i))
         else:
             print(test_acc_i)
             print(rd_i)
@@ -47,6 +51,6 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         return mean_acc.tolist(), mean_rd.tolist()
     else:
         mean_acc, std_acc, mean_rd, std_rd = np.mean(test_acc), np.std(test_acc), np.mean(rd), np.std(rd)
-        print("| Test Accuracy: %.3f(%.3f) | %s: %.3f(%.3f) |" % (mean_acc, std_acc, metric, mean_rd, std_rd))
+        print("| Test Accuracy: %.3f(%.3f) | %s: %.3f(%.3f) |" % (mean_acc, std_acc, "EO Disparity", mean_rd, std_rd))
         print("| Time elapsed: %.2f seconds |" % (time.time() - start))
         return mean_acc, std_acc, mean_rd, std_rd

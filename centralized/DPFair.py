@@ -16,7 +16,7 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 class Server(object):
     def __init__(self, model, dataset_info, seed = 123, num_workers = 4, ret = False, 
-                train_prn = False, batch_size = 128, print_every = 1, Z = 2):
+               prn = True, batch_size = 128, print_every = 1, Z = 2, ret_n_yz = False):
         """
         Server execution.
 
@@ -52,8 +52,8 @@ class Server(object):
         self.num_workers = num_workers
 
         self.ret = ret
-        self.prn = not ret
-        self.train_prn = False if ret else train_prn
+        self.prn = prn
+        self.train_prn = False 
 
         self.disparity = DPDisparity
         self.metric = "Demographic disparity"
@@ -64,6 +64,8 @@ class Server(object):
         self.train_dataset, self.test_dataset, _ = dataset_info
         self.trainloader, self.validloader = self.train_val(self.train_dataset, batch_size)
         self.Z = Z
+
+        self.ret_n_yz = ret_n_yz
 
     def train_val(self, dataset, batch_size, idxs_train_full = None, split = False):
         """
@@ -297,7 +299,7 @@ class Server(object):
 
         if self.ret: return test_acc, rd
  
-    def FairConstraints(self, num_epochs = 10, learning_rate = 0.001, penalty = 500, optimizer = 'adam', epsilon = None):
+    def FairConstraints(self, num_epochs = 10, learning_rate = 0.001, penalty = 500, optimizer = 'adam', epsilon = None, trace = False):
         # set seed
         np.random.seed(self.seed)
         random.seed(self.seed)
@@ -313,10 +315,11 @@ class Server(object):
         # Training
         train_accuracy = []
         start_time = time.time()
+        if trace: acc_l, dp_l = [], []
         
         for round_ in tqdm(range(num_epochs)):
             list_acc = []
-            if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
+            if self.prn and round_ % 50 == 0: print(f'\n | Global Training Round : {round_+1} |\n')
 
             self.model.train()
 
@@ -337,7 +340,7 @@ class Server(object):
                     
 
             # print global training loss after every 'i' rounds
-            if self.prn:
+            if self.prn and round_ % 50 == 0:
                 if (round_+1) % self.print_every == 0:
                     print(f' \nAvg Training Stats after {round_+1} global rounds:')
                     print("accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
@@ -345,6 +348,12 @@ class Server(object):
                     print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation %s: %.4f" % (
                         loss, 
                         100*train_accuracy[-1], self.metric, self.disparity(n_yz)))
+
+            if trace and ((round_+1) % trace == 0) and (round_ >= 30):
+                test_acc, n_yz = self.test_inference(self.model, self.test_dataset)
+                rd = self.disparity(n_yz)
+                acc_l.append(test_acc)
+                dp_l.append(rd)
 
             if epsilon: 
                 if self.disparity(n_yz) < epsilon and train_accuracy[-1] > 0.5: break
@@ -363,7 +372,13 @@ class Server(object):
 
             print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
 
-        if self.ret: return test_acc, rd
+        if self.ret: 
+            if trace:
+                return acc_l, dp_l
+            if self.ret_n_yz:
+                return test_acc, n_yz
+            else:
+                return test_acc, rd
 
     def AdversarialLearning(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, 
                     optimizer = "adam", epsilon = None, alpha = 0.005, sensitive_level = 2, num_classes = 2, adaptive_lr = False):
@@ -602,7 +617,7 @@ class Server(object):
         optimizer_D = torch.optim.SGD(discriminator.parameters(), lr = lr_d)
         
         for epoch in tqdm(range(num_epochs)):
-            if self.prn: print(f'\n | Global Training Round : {epoch+1} |\n')
+            if self.prn and (epoch+1) % 50 == 0: print(f'\n | Global Training Round : {epoch+1} |\n')
 
             self.model.train()
             batch_loss = []
@@ -680,14 +695,14 @@ class Server(object):
                                             adv_loss + batch_adv_loss.item())
             accuracy = correct/total
                     
-            if self.prn: 
+            if self.prn and (epoch+1) % 50 == 0: 
                 print("Predictor loss: %.2f | adversary loss %.2f | %s = %.2f" % (
                         acc_loss, adv_loss, self.metric, self.disparity(n_yz)))
 
             train_accuracy.append(accuracy)
 
             # print global training loss after every 'i' rounds
-            if self.prn:
+            if self.prn and (epoch+1) % 50 == 0:
                 if (epoch+1) % self.print_every == 0:
                     print(f' \nAvg Training Stats after {epoch+1} global rounds:')
                     print("Training loss: %.2f | Validation accuracy: %.2f%% | Validation %s: %.4f" % (
@@ -748,7 +763,7 @@ class Server(object):
         if trace: acc_l, dp_l = [], []
 
         for round_ in tqdm(range(num_epochs)):
-            if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
+            if self.prn and round_ % 50 == 0: print(f'\n | Global Training Round : {round_+1} |\n')
 
             self.model.train()
             batch_loss = []
@@ -764,10 +779,7 @@ class Server(object):
                 for y, z in lbd:
                     group_idx[(y,z)] = torch.where((labels == y) & (sensitive == z))[0]
                     v[group_idx[(y,z)]] = lbd[(y,z)] * sum([m_yz[(y,z)] for z in range(self.Z)]) / m_yz[(y,z)]
-
-                # print(logits)
                 loss = weighted_loss(logits, labels, v)
-                # if global_round == 1: print(loss)
 
                 optimizer.zero_grad()
                 if not np.isnan(loss.item()): loss.backward()
@@ -790,9 +802,9 @@ class Server(object):
                 # validation dataset inference
             acc, loss, n_yz, acc_loss, fair_loss, loss_yz = self.inference(model = self.model, option = 'FairBatch', validloader=self.trainloader) 
             list_acc.append(acc)
-    
+
                 
-            if self.prn: print("Accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
+            if self.prn and round_ % 50 == 0: print("Accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
                  acc_loss, fair_loss, self.metric, self.disparity(n_yz)))
                 
             # update the lambda according to the paper -> see Section A.1 of FairBatch
@@ -820,7 +832,7 @@ class Server(object):
             train_accuracy.append(sum(list_acc)/len(list_acc))
 
             # print global training loss after every 'i' rounds
-            if self.prn:
+            if self.prn and round_ % 50 == 0:
                 if (round_+1) % self.print_every == 0:
                     print(f' \nAvg Training Stats after {round_+1} global rounds:')
                     print("Training loss: %.2f | Training accuracy: %.2f%% | Training %s: %.4f" % (
@@ -850,6 +862,8 @@ class Server(object):
         if self.ret: 
             if trace:
                 return acc_l, dp_l
+            if self.ret_n_yz:
+                return test_acc, n_yz
             else:
                 return test_acc, rd
 

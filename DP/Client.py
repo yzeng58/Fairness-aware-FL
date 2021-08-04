@@ -676,6 +676,142 @@ class Client(object):
         # weight, loss
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc
 
+    def local_fb(self, model, learning_rate, local_epochs, optimizer, alpha, lbd = None, m_yz = None):
+        # Set mode to train model
+        epoch_loss = []
+        nc = 0
+
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        # Set optimizer for the local updates
+        if optimizer == 'sgd':
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate,
+                                        momentum=0.5) # 
+        elif optimizer == 'adam':
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                        weight_decay=1e-4)
+        
+        if lbd == None:
+            m_yz, lbd = {}, {}
+            for y in [0,1]:
+                for z in range(self.Z):
+                    m_yz[(y,z)] = ((self.dataset.y == y) & (self.dataset.sen == z)).sum()
+
+            for y in [0,1]:
+                for z in range(self.Z):
+                    lbd[(y,z)] = m_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
+
+        for epoch in range(local_epochs):
+            model.train()
+            batch_loss = []
+            for _, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE)
+                _, logits = model(features)
+
+                v = torch.ones(len(labels)).type(torch.DoubleTensor)
+                
+                group_idx = {}
+                for y, z in lbd:
+                    group_idx[(y,z)] = torch.where((labels == y) & (sensitive == z))[0]
+                    v[group_idx[(y,z)]] = lbd[(y,z)] / (m_yz[(1,z)] + m_yz[(0,z)])
+                    nc += v[group_idx[(y,z)]].sum().item()
+
+                loss = weighted_loss(logits, labels, v, False)
+
+                optimizer.zero_grad()
+                if not np.isnan(loss.item()): loss.backward()
+                optimizer.step()
+                batch_loss.append(loss.item())
+            epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+            model.eval()
+            # validation dataset inference
+            _, _, _, _, _, loss_yz = self.inference(model = model, train = True) 
+
+            for y, z in loss_yz:
+                loss_yz[(y,z)] = loss_yz[(y,z)]/(m_yz[(0,z)] + m_yz[(1,z)])
+
+            y0_diff = loss_yz[(0,0)] - loss_yz[(0,1)]
+            y1_diff = loss_yz[(1,0)] - loss_yz[(1,1)]
+            if y0_diff > y1_diff:
+                lbd[(0,0)] -= alpha / (epoch+1)
+                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
+                lbd[(1,0)] = 1 - lbd[(0,0)]
+                lbd[(0,1)] += alpha / (epoch+1)
+                lbd[(0,1)] = min(max(0, lbd[(0,1)]), 1)
+                lbd[(1,1)] = 1 - lbd[(0,1)]
+            else:
+                lbd[(0,0)] += alpha / (epoch+1)
+                lbd[(0,0)] = min(max(0, lbd[(0,0)]), 1)
+                lbd[(0,1)] = 1 - lbd[(0,0)]
+                lbd[(1,0)] -= alpha / (epoch+1)
+                lbd[(1,0)] = min(max(0, lbd[(1,0)]), 1)
+                lbd[(1,1)] = 1 - lbd[(1,0)]
+
+        # weight, loss
+        return model.state_dict(), sum(epoch_loss) / len(epoch_loss), nc, lbd, m_yz
+
+    def local_ft(self, model, global_round, local_epochs = 30, lr_g = 0.005, lr_d = 0.01, num_classes = 2, ratio_gd = 3,
+                 lambda_d = 0.2, init_epochs = 100, discriminator_para = None):
+        # set seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+        # discriminator: estimate the sensitive attribute
+        discriminator = logReg(num_classes, self.Z)
+        if discriminator_para: discriminator.load_state_dict(discriminator_para)
+
+        generator = model
+
+        # Set optimizer for the local updates
+        optimizer_G = torch.optim.Adam(generator.parameters(), lr = lr_g)
+        optimizer_D = torch.optim.SGD(discriminator.parameters(), lr = lr_d)
+        
+        for i in range(local_epochs):
+            epoch = global_round * local_epochs + i
+            if self.prn and epoch % 50 == 0: print(f'\n | Global Training Round : {epoch+1} |\n')
+
+            model.train()
+            for _, (features, labels, sensitive) in enumerate(self.trainloader):
+                features, labels = features.to(DEVICE), labels.to(DEVICE).type(torch.LongTensor)
+                sensitive = sensitive.to(DEVICE).type(torch.LongTensor)
+
+                # for the first 100 epochs, train both generator and discriminator
+                # after the first 100 epochs, ratio of updating generator and discriminator (1:ratio_gd training)
+                if epoch % ratio_gd == 0 or epoch < init_epochs:
+                    # forward generator
+                    optimizer_G.zero_grad()
+                
+                _, logits_g = generator(features)
+
+                # train fairness discriminator
+                optimizer_D.zero_grad()
+                loss_d = F.cross_entropy(discriminator(logits_g.detach())[1], sensitive)
+                loss_d.backward()
+                optimizer_D.step()
+
+                loss_g = F.cross_entropy(logits_g, labels)
+                # update generator
+                if epoch < init_epochs:
+                    loss_g.backward()
+                    optimizer_G.step()
+
+                elif epoch % ratio_gd == 0:
+                    _, logits_d = discriminator(logits_g)
+                    loss_d = F.cross_entropy(logits_d, sensitive)
+                    
+                    loss = (1-lambda_d) * loss_g - lambda_d * loss_d
+                    loss.backward()
+                    optimizer_G.step()
+
+            # Calculate avg training accuracy over all clients at every round
+            # the number of samples which are assigned to class y and belong to the sensitive group z
+        return generator.state_dict(), discriminator.state_dict()
+            
     def get_n_yz(self):
         trainloader = DatasetSplit(self.dataset, self.idxs)      
         x, y, z = torch.tensor(trainloader.x), torch.tensor(trainloader.y), torch.tensor(trainloader.sen)

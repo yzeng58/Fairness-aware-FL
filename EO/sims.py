@@ -5,7 +5,7 @@ from Server import *
 import time
 
 def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate = 0.005, num_rounds = 5, 
-          local_epochs = 40, alpha = 1, option = "FairBatch",
+          local_epochs = 40, alpha = 1, option = "FairBatch", Z = 2,
           optimizer = 'adam', penalty = 500, adjusting_rounds = 10, adjusting_epochs = 30, 
           adjusting_alpha = 0.7, epsilon = 0.02, test_lr = 0.01, test_rounds = 3, test_penalty = 10, 
           lr_g = 0.005, lr_d = 0.01, init_epochs = 50, adaptive_lr = True, lambda_d = 0.8, adaptive_penalty = True, fixed_dataset = None, trace = False):
@@ -16,7 +16,7 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
     test_acc, rd = [], []
     start = time.time()
     
-    if fixed_dataset: synthetic_info = dataGenerate(seed = fixed_dataset, train_samples = train_samples, test_samples = test_samples)
+    if fixed_dataset: synthetic_info = dataGenerate(seed = fixed_dataset, train_samples = train_samples, test_samples = test_samples, Z = Z)
     for i in range(num_sim):
         seed = int(time.time()%1000)
         print("|  Simulation : %d | " % (i+1))
@@ -62,6 +62,10 @@ def runSim(num_sim = 20, train_samples = 3000, test_samples = 100, learning_rate
         elif option == 'local fairness constraint':
             test_acc_i, rd_i = server.LocalFC(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
                 optimizer = optimizer, penalty = penalty)
+
+        elif option == 'localfb':
+            test_acc_i, rd_i = server.LocalFB(num_rounds = num_rounds, local_epochs = local_epochs, learning_rate = learning_rate, 
+                optimizer = optimizer, alpha = alpha, trace = trace)
 
         else:
             print('Approach %s is not supported!' % option)
