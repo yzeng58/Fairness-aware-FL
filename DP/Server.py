@@ -284,10 +284,8 @@ class Server(object):
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
 
             self.model.train()
-            m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
-            idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
 
-            for idx in idxs_users:
+            for idx in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
                             batch_size = self.batch_size, option = "local zafar", seed = self.seed, prn = self.train_prn, penalty = penalty[idx], Z = self.Z)
 
@@ -299,7 +297,7 @@ class Server(object):
                 local_losses.append(copy.deepcopy(loss))
 
             # update global weights
-            weights = average_weights(local_weights, self.clients_idx, idxs_users)
+            weights = average_weights(local_weights, self.clients_idx, list(range(self.num_clients)))
             self.model.load_state_dict(weights)
 
             loss_avg = sum(local_losses) / len(local_losses)
@@ -313,11 +311,10 @@ class Server(object):
                 for z in range(self.Z):
                     n_yz[(y,z)] = 0
             self.model.eval()
-            for c in range(m):
+            for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c],
                             batch_size = self.batch_size, option = "local zafar", seed = self.seed, prn = self.train_prn, penalty = penalty[c], Z = self.Z)
-                # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
+                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model)  
                 list_acc.append(acc)
                 
                 for yz in n_yz:
@@ -1778,7 +1775,7 @@ class Server(object):
         if self.ret: return test_acc, rd        
 
     # only support z == 2
-    def LocalFB(self, num_rounds = 10, local_epochs = 30, learning_rate = 0.005, optimizer = 'adam', alpha = 0.3, trace = False):
+    def LocalFB(self, num_rounds = 10, local_epochs = 30, learning_rate = (0.005, 0.005, 0.005), optimizer = 'adam', alpha = (0.3,0.3,0.3), trace = False):
         # new algorithm for demographic parity, add weights directly, signed gradient-based algorithm
         # set seed
         # set seed
@@ -1799,17 +1796,17 @@ class Server(object):
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
 
             self.model.train()
-            m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
-            idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
+            # m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
+            # idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
 
-            for idx in idxs_users:
+            for idx in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
                             batch_size = self.batch_size, option = "FB-Variant1", seed = self.seed, prn = self.train_prn, Z = self.Z)
 
                 w, loss, nc_, lbd_, m_yz_ = local_model.local_fb(
                                 model=copy.deepcopy(self.model), 
-                                    learning_rate = learning_rate, local_epochs = local_epochs, 
-                                    optimizer = optimizer, alpha = alpha, lbd = lbd[idx], m_yz = m_yz[idx])
+                                    learning_rate = learning_rate[idx], local_epochs = local_epochs, 
+                                    optimizer = optimizer, alpha = alpha[idx], lbd = lbd[idx], m_yz = m_yz[idx])
                 lbd[idx], m_yz[idx], nc[idx] = lbd_, m_yz_, nc_
                 local_weights.append(copy.deepcopy(w))
                 local_losses.append(copy.deepcopy(loss))
@@ -1829,11 +1826,13 @@ class Server(object):
                 for z in range(self.Z):
                     n_yz[(y,z)] = 0
             self.model.eval()
-            for c in range(m):
+            for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
                             batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn, Z = self.Z)
                 # validation dataset inference
-                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
+                valid_model = copy.deepcopy(self.model)
+                valid_model.load_state_dict(local_weights[c])
+                acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = valid_model) 
                 list_acc.append(acc)
 
                 for yz in n_yz:
@@ -1894,10 +1893,8 @@ class Server(object):
             if self.prn: print(f'\n | Global Training Round : {round_+1} |\n')
 
             self.model.train()
-            m = max(1, int(self.fraction_clients * self.num_clients)) # the number of clients to be chosen in each round_
-            idxs_users = np.random.choice(range(self.num_clients), m, replace=False)
 
-            for idx in idxs_users:
+            for idx in range(self.num_clients):
                 local_client = Client(dataset=self.train_dataset, idxs=self.clients_idx[idx], 
                             batch_size = self.batch_size, option = "ftrain", seed = self.seed, prn = self.train_prn, Z = self.Z)
 
@@ -1907,7 +1904,7 @@ class Server(object):
                 local_weights_d[idx] = copy.deepcopy(w_d)
 
             # update global weights
-            weights_g = average_weights(local_weights_g, self.clients_idx, idxs_users)
+            weights_g = average_weights(local_weights_g, self.clients_idx, np.array(list(range(self.num_clients))))
             self.model.load_state_dict(weights_g)
 
            
@@ -1919,10 +1916,12 @@ class Server(object):
                 for z in range(self.Z):
                     n_yz[(y,z)] = 0
             self.model.eval()
-            for c in range(m):
+            for c in range(self.num_clients):
                 local_model = Client(dataset=self.train_dataset, idxs=self.clients_idx[c], 
                             batch_size = self.batch_size, option = "unconstrained", seed = self.seed, prn = self.train_prn, Z = self.Z)
                 # validation dataset inference
+                # valid_model = copy.deepcopy(self.model)
+                # valid_model.load_state_dict(local_weights_g[c])
                 acc, loss, n_yz_c, acc_loss, fair_loss, _ = local_model.inference(model = self.model) 
                 list_acc.append(acc)
                 train_loss.append(loss)
@@ -1959,10 +1958,7 @@ class Server(object):
             print('\n Total Run Time: {0:0.4f} sec'.format(time.time()-start_time))
 
         if self.ret: 
-            if trace:
-                return acc_l, dp_l
-            else:
-                return test_acc, rd
+            return test_acc, rd
 
     def test_inference(self, model = None, test_dataset = None):
 

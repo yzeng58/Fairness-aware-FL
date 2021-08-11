@@ -319,7 +319,7 @@ class Server(object):
         
         for round_ in tqdm(range(num_epochs)):
             list_acc = []
-            if self.prn and round_ % 50 == 0: print(f'\n | Global Training Round : {round_+1} |\n')
+            if self.prn and (round_+1) % 50 == 0: print(f'\n | Global Training Round : {round_+1} |\n')
 
             self.model.train()
 
@@ -340,7 +340,7 @@ class Server(object):
                     
 
             # print global training loss after every 'i' rounds
-            if self.prn and round_ % 50 == 0:
+            if self.prn and (round_+1) % 50 == 0:
                 if (round_+1) % self.print_every == 0:
                     print(f' \nAvg Training Stats after {round_+1} global rounds:')
                     print("accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
@@ -763,7 +763,7 @@ class Server(object):
         if trace: acc_l, dp_l = [], []
 
         for round_ in tqdm(range(num_epochs)):
-            if self.prn and round_ % 50 == 0: print(f'\n | Global Training Round : {round_+1} |\n')
+            if self.prn and (round_+1) % 50 == 0: print(f'\n | Global Training Round : {round_+1} |\n')
 
             self.model.train()
             batch_loss = []
@@ -804,7 +804,7 @@ class Server(object):
             list_acc.append(acc)
 
                 
-            if self.prn and round_ % 50 == 0: print("Accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
+            if self.prn and (round_+1) % 50 == 0: print("Accuracy loss: %.2f | fairness loss %.2f | %s = %.2f" % (
                  acc_loss, fair_loss, self.metric, self.disparity(n_yz)))
                 
             # update the lambda according to the paper -> see Section A.1 of FairBatch
@@ -832,7 +832,7 @@ class Server(object):
             train_accuracy.append(sum(list_acc)/len(list_acc))
 
             # print global training loss after every 'i' rounds
-            if self.prn and round_ % 50 == 0:
+            if self.prn and (round_+1) % 50 == 0:
                 if (round_+1) % self.print_every == 0:
                     print(f' \nAvg Training Stats after {round_+1} global rounds:')
                     print("Training loss: %.2f | Training accuracy: %.2f%% | Training %s: %.4f" % (

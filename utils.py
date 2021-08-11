@@ -398,3 +398,57 @@ def nsfData(q = (0.99, 0.01), theta = (0.38/0.99, -0.5), train_samples = 3000, t
     train_dataset = LoadData(train_data, "y", "a")
     test_dataset = LoadData(test_data, "y", "a")
     return [train_dataset, test_dataset, clients_idx]
+
+def ufldataset(train_samples = 3000, test_samples = 300, seed = 123):
+    np.random.seed(seed)
+    random.seed(seed)
+    clients_idx = []
+    train_data, test_data = [], []
+    
+    # client 0
+    a = np.random.binomial(n = 1, p = .5, size = train_samples//2 + test_samples//2)
+    def prod_x(a):
+        if a: 
+            return np.random.normal(0, 2, size = 1)[0]
+        else:
+            return np.random.normal(2, 2, size = 1)[0]
+    prod_x_v = np.vectorize(prod_x)
+    x = prod_x_v(a)
+    
+    def prod_y(x):
+        return np.random.binomial(n = 1, p = 1/(1+np.exp(-x)), size = 1)[0]
+    
+    prod_y_v = np.vectorize(prod_y)
+    y = prod_y_v(x)
+    
+    data = pd.DataFrame(zip(x,a,y), columns = ["x", "a", "y"])
+    train_data.append(data[:train_samples//2])
+    test_data.append(data[train_samples//2:])
+    
+    # client 1
+    a = np.random.binomial(n = 1, p = .5, size = train_samples//2 + test_samples//2)
+    def prod_x(a):
+        if a: 
+            return np.random.normal(0, 0.5, size = 1)[0]
+        else:
+            return np.random.normal(-2, 0.5, size = 1)[0]
+    prod_x_v = np.vectorize(prod_x)
+    x = prod_x_v(a)
+    
+    prod_y_v = np.vectorize(prod_y)
+    y = prod_y_v(x)
+    
+    data = pd.DataFrame(zip(x,a,y), columns = ["x", "a", "y"])
+    train_data.append(data[:train_samples//2])
+    test_data.append(data[train_samples//2:])
+    
+    train_data = pd.concat(train_data).reset_index(drop=True)
+    test_data = pd.concat(test_data).reset_index(drop=True)
+    train_data = train_data.sample(frac = 1)
+    test_data = test_data.sample(frac = 1).reset_index(drop=True)
+    clients_idx.append(np.where(train_data.index < train_samples//2)[0])
+    clients_idx.append(np.where(train_data.index >= train_samples//2)[0])
+    train_data = train_data.reset_index(drop=True)
+    train_dataset = LoadData(train_data, "y", "a")
+    test_dataset = LoadData(test_data, "y", "a")
+    return [train_dataset, test_dataset, clients_idx]
